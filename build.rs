@@ -71,7 +71,7 @@ fn main() {
 		.files(bridge_files)
 		.static_crt(true)
 		.cpp(true)
-		.std("c++17")
+		.std("c++20")
 		.warnings(false)
 		.extra_warnings(false);
 

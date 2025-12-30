@@ -59,7 +59,6 @@ fn main() {
 	cc::Build::new()
 		.include("xxHash/")
 		.files(xxhash_files)
-		.static_crt(true)
 		.warnings(false)
 		.compile("xxhash");
 
@@ -69,7 +68,6 @@ fn main() {
 		.include("xxHash/")
 		.files(kkdlib_files)
 		.files(bridge_files)
-		.static_crt(true)
 		.cpp(true)
 		.std("c++17")
 		.warnings(false)

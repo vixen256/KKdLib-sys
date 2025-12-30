@@ -68,7 +68,8 @@ dependencies = [
 [[package]]
 name = "directxtex"
 version = "1.3.0"
-source = "git+https://github.com/vixen256/directxtex-rs#8d684fdff0d616db366e74b9a1c9c97bc176f85c"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0f0cea4cfe7ef3eeeae77cbbe6c8eddb7e518b1af877ca788b7a9d4fde45e658"
 dependencies = [
  "bitflags",
  "cc",

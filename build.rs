@@ -49,11 +49,11 @@ fn main() {
 		.collect::<Vec<_>>();
 
 	for file in &kkdlib_files {
-		println!("cargo::rerun-if-changed={}", file);
+		println!("cargo:rerun-if-changed={}", file);
 	}
 
 	for file in &bridge_files {
-		println!("cargo::rerun-if-changed={}", file);
+		println!("cargo:rerun-if-changed={}", file);
 	}
 
 	cc::Build::new()
@@ -72,7 +72,6 @@ fn main() {
 		.static_crt(true)
 		.cpp(true)
 		.std("c++17")
-		.cpp_link_stdlib_static(true)
 		.warnings(false)
 		.extra_warnings(false);
 

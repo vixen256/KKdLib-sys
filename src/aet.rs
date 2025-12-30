@@ -75,14 +75,14 @@ pub struct LayerFlags {
 	pub markers_locked: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct FCurveKey {
 	pub frame: f32,
 	pub value: f32,
 	pub tangent: f32,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct FCurve {
 	pub keys: Vec<FCurveKey>,
 }
@@ -122,14 +122,14 @@ impl FCurve {
 	}
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct TransferMode {
 	pub mode: BlendMode,
 	pub flag: u8,
 	pub matte: u8,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct LayerVideo3D {
 	pub anchor_z: FCurve,
 	pub pos_z: FCurve,
@@ -141,7 +141,7 @@ pub struct LayerVideo3D {
 	pub scale_z: FCurve,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct LayerVideo {
 	pub transfer_mode: TransferMode,
 	pub anchor_x: FCurve,
@@ -155,7 +155,7 @@ pub struct LayerVideo {
 	pub _3d: Option<LayerVideo3D>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct LayerAudio {
 	pub volume_l: FCurve,
 	pub volume_r: FCurve,
@@ -163,7 +163,7 @@ pub struct LayerAudio {
 	pub pan_r: FCurve,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Camera {
 	pub eye_x: FCurve,
 	pub eye_y: FCurve,
@@ -180,13 +180,13 @@ pub struct Camera {
 	pub zoom: FCurve,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct VideoSource {
 	pub name: String,
 	pub id: u32,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Video {
 	pub color: [u8; 3],
 	pub width: u16,
@@ -195,12 +195,12 @@ pub struct Video {
 	pub sources: Vec<VideoSource>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Audio {
 	pub sound_index: u32,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Item {
 	None,
 	Video(Video),
@@ -208,7 +208,7 @@ pub enum Item {
 	Composition(Composition),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Layer {
 	pub name: String,
 	pub start_time: f32,
@@ -223,12 +223,12 @@ pub struct Layer {
 	pub audio: Option<LayerAudio>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Composition {
 	pub layers: Vec<Layer>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Scene {
 	pub name: String,
 	pub start_time: f32,
@@ -241,7 +241,7 @@ pub struct Scene {
 	pub root: Composition,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Set {
 	pub modern: bool,
 	pub big_endian: bool,

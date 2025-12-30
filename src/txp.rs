@@ -457,7 +457,7 @@ impl Texture {
 		let y_scratch = y_scratch
 			.compress(
 				DXGI_FORMAT_BC5_UNORM,
-				TEX_COMPRESS_DITHER | TEX_COMPRESS_PARALLEL,
+				TEX_COMPRESS_DITHER,
 				TEX_THRESHOLD_DEFAULT,
 			)
 			.ok()?;
@@ -468,7 +468,7 @@ impl Texture {
 		let cbcr_scratch = cbcr_scratch
 			.compress(
 				DXGI_FORMAT_BC5_UNORM,
-				TEX_COMPRESS_DITHER | TEX_COMPRESS_PARALLEL,
+				TEX_COMPRESS_DITHER,
 				TEX_THRESHOLD_DEFAULT,
 			)
 			.ok()?;
@@ -996,7 +996,7 @@ impl Mipmap {
 								Format::BC6H => DXGI_FORMAT_BC6H_UF16,
 								_ => unreachable!(),
 							},
-							TEX_COMPRESS_DITHER | TEX_COMPRESS_PARALLEL,
+							TEX_COMPRESS_DITHER,
 							TEX_THRESHOLD_DEFAULT,
 						)
 						.unwrap();

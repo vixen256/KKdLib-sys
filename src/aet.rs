@@ -1,4 +1,7 @@
+use std::collections::*;
 use std::ffi::*;
+use std::rc::*;
+use std::sync::*;
 
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -208,7 +211,7 @@ pub enum Item {
 	Composition(Composition),
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct Layer {
 	pub name: String,
 	pub start_time: f32,
@@ -221,11 +224,50 @@ pub struct Layer {
 	pub markers: Vec<(String, f32)>,
 	pub video: Option<LayerVideo>,
 	pub audio: Option<LayerAudio>,
+
+	// NOTE: this is NOT the layer whos item is a comp that has this as a child, this is some other thing
+	// Sega pls
+	pub parent: Option<Rc<Mutex<Layer>>>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+impl PartialEq for Layer {
+	fn eq(&self, other: &Self) -> bool {
+		let parent_same = if let Some(a) = &self.parent
+			&& let Some(b) = &other.parent
+		{
+			Rc::ptr_eq(a, b)
+		} else if self.parent.is_none() && other.parent.is_none() {
+			true
+		} else {
+			false
+		};
+		parent_same
+			&& self.name == other.name
+			&& self.start_time == other.start_time
+			&& self.end_time == other.end_time
+			&& self.offset_time == other.offset_time
+			&& self.time_scale == other.time_scale
+			&& self.flags == other.flags
+			&& self.quality == other.quality
+			&& self.item == other.item
+			&& self.markers == other.markers
+			&& self.video == other.video
+			&& self.audio == other.audio
+	}
+}
+
+#[derive(Debug, Clone)]
 pub struct Composition {
-	pub layers: Vec<Layer>,
+	pub layers: Vec<Rc<Mutex<Layer>>>,
+}
+
+impl PartialEq for Composition {
+	fn eq(&self, other: &Self) -> bool {
+		self.layers
+			.iter()
+			.zip(other.layers.iter())
+			.all(|(a, b)| *a.lock().unwrap() == *b.lock().unwrap())
+	}
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -278,6 +320,7 @@ fn count_fcurve(fcurve: &FCurve, count: &mut SetCounts) {
 fn count_comp(comp: &Composition, count: &mut SetCounts) {
 	count.comp_count += 1;
 	for layer in &comp.layers {
+		let layer = layer.lock().unwrap();
 		count.layer_count += 1;
 		count.name_count += 1;
 		count.marker_count += layer.markers.len();
@@ -335,6 +378,7 @@ struct SetMemory {
 	fcurve_keys: Vec<f32>,
 	layer_audios: Vec<aet_layer_audio>,
 	layers: Vec<aet_layer>,
+	layer_ptrs: Vec<(Rc<Mutex<Layer>>, *const aet_layer)>,
 	layer_video_3ds: Vec<aet_layer_video_3d>,
 	layer_videos: Vec<aet_layer_video>,
 	markers: Vec<aet_marker>,
@@ -582,7 +626,7 @@ fn alloc_item(
 				}
 				for j in 0..comp.layers.len() {
 					let layer = unsafe { &*memory.comps[i].layers.offset(j as isize) };
-					if !layer_eq(&comp.layers[j], layer) {
+					if !layer_eq(&comp.layers[j].lock().unwrap(), layer) {
 						continue 'outer;
 					}
 				}
@@ -625,7 +669,8 @@ fn alloc_comp(
 
 	let mut aet_layers = Vec::new();
 
-	for layer in &in_comp.layers {
+	for in_layer in &in_comp.layers {
+		let layer = in_layer.lock().unwrap();
 		let name = CString::new(layer.name.clone()).unwrap_or_default();
 		let name = memory.names.push_mut(name).as_ptr();
 
@@ -708,7 +753,9 @@ fn alloc_comp(
 			quality: unsafe { std::mem::transmute(layer.quality) },
 			item_type: 0,
 			item: std::ptr::null(),
-			parent: std::ptr::null(),
+			parent: layer.parent.as_ref().map_or(std::ptr::null(), |parent| {
+				Rc::into_raw(parent.clone()) as *const aet_layer
+			}),
 			markers_count: layer.markers.len() as u32,
 			markers,
 			video,
@@ -717,9 +764,11 @@ fn alloc_comp(
 
 		let aet_layer = memory.layers.push_mut(aet_layer) as *mut aet_layer;
 		aet_layers.push(aet_layer);
+		memory.layer_ptrs.push((in_layer.clone(), aet_layer));
 	}
 
 	for (layer, aet_layer) in in_comp.layers.iter().zip(aet_layers.into_iter()) {
+		let layer = layer.lock().unwrap();
 		let (item_type, item) = alloc_item(&layer.item, out_scene, memory);
 		let aet_layer = unsafe { &mut *aet_layer };
 		aet_layer.item_type = item_type;
@@ -752,7 +801,14 @@ impl Set {
 			}
 
 			let root = unsafe { scene.comp.offset(scene.comp_count as isize - 1).read() };
-			let root = root.into();
+			let (root, map) = root.decode();
+			for (_, (rc, parent)) in &map {
+				let Some(parent) = parent else {
+					continue;
+				};
+
+				rc.lock().unwrap().parent = map.get(parent).map(|(rc, _)| rc).cloned();
+			}
 
 			let name = unsafe { CStr::from_ptr(scene.name) };
 			let camera = if scene.camera != std::ptr::null() {
@@ -830,6 +886,7 @@ impl Set {
 			fcurve_keys: Vec::with_capacity(count.fcurve_key_count),
 			layer_audios: Vec::with_capacity(count.layer_audio_count),
 			layers: Vec::with_capacity(count.layer_count),
+			layer_ptrs: Vec::with_capacity(count.layer_count),
 			layer_video_3ds: Vec::with_capacity(count.layer_video_3d_count),
 			layer_videos: Vec::with_capacity(count.layer_video_count),
 			markers: Vec::with_capacity(count.marker_count),
@@ -916,6 +973,21 @@ impl Set {
 
 			memory.comps.push(root_comp);
 			memory.scenes.push(Box::new(aet_scene));
+		}
+
+		// Iteration three, set all the parent pointers to proper values rather than rcs
+		for layer in &mut memory.layers {
+			if layer.parent == std::ptr::null() {
+				continue;
+			}
+
+			let parent = unsafe { Rc::from_raw(layer.parent as *const Mutex<Layer>) };
+			let real_parent = memory
+				.layer_ptrs
+				.iter()
+				.find(|(rc, _)| Rc::ptr_eq(&parent, rc))
+				.map_or(std::ptr::null(), |(_, ptr)| *ptr);
+			layer.parent = real_parent;
 		}
 
 		set.ready = true;
@@ -1099,15 +1171,21 @@ struct aet_comp {
 	layers: *const aet_layer,
 }
 
-impl Into<Composition> for aet_comp {
-	fn into(self) -> Composition {
+impl aet_comp {
+	fn decode(
+		self,
+	) -> (
+		Composition,
+		HashMap<usize, (Rc<Mutex<Layer>>, Option<usize>)>,
+	) {
 		let layers = std::ptr::slice_from_raw_parts(self.layers, self.layers_count as usize);
 		let layers = unsafe { &*layers };
 
 		let mut real = Composition {
 			layers: Vec::with_capacity(self.layers_count as usize),
 		};
-		for layer in layers {
+		let mut map = HashMap::new();
+		for (i, layer) in layers.iter().enumerate() {
 			let name = unsafe { CStr::from_ptr(layer.name) };
 
 			let markers =
@@ -1222,13 +1300,15 @@ impl Into<Composition> for aet_comp {
 						Item::None
 					} else {
 						let comp = unsafe { ptr.read() };
-						Item::Composition(comp.into())
+						let (comp, inner_map) = comp.decode();
+						map.extend(inner_map);
+						Item::Composition(comp)
 					}
 				}
 				_ => unreachable!(),
 			};
 
-			real.layers.push(Layer {
+			let rc = Rc::new(Mutex::new(Layer {
 				name: name.to_string_lossy().to_string(),
 				start_time: layer.start_time,
 				end_time: layer.end_time,
@@ -1240,10 +1320,24 @@ impl Into<Composition> for aet_comp {
 				markers,
 				video,
 				audio,
-			});
+				parent: None,
+			}));
+
+			map.insert(
+				unsafe { self.layers.add(i) } as usize,
+				(
+					rc.clone(),
+					if layer.parent == std::ptr::null() {
+						None
+					} else {
+						Some(layer.parent as usize)
+					},
+				),
+			);
+			real.layers.push(rc);
 		}
 
-		real
+		(real, map)
 	}
 }
 

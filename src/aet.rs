@@ -475,7 +475,7 @@ fn layer_eq(own_layer: &Layer, aet_layer: &aet_layer) -> bool {
 		|| aet_layer.end_time != own_layer.end_time
 		|| aet_layer.offset_time != own_layer.offset_time
 		|| aet_layer.time_scale != own_layer.time_scale
-		|| aet_layer.flags != own_layer.flags.into()
+		|| aet_layer.flags != own_layer.flags.into_bits()
 		|| (aet_layer.video == std::ptr::null() && own_layer.video.is_some())
 		|| (aet_layer.audio == std::ptr::null() && own_layer.audio.is_some())
 		|| (aet_layer.video != std::ptr::null() && own_layer.video.is_none())

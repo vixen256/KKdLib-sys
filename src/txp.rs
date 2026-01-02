@@ -25,6 +25,35 @@ pub(crate) mod txp_module {
 	use super::Texture;
 }
 
+#[cfg(all(feature = "pyo3", feature = "wgpu"))]
+static WGPU_RESOURCES: std::sync::OnceLock<(wgpu::Device, wgpu::Queue)> =
+	std::sync::OnceLock::new();
+
+#[cfg(all(feature = "pyo3", feature = "wgpu"))]
+fn init_wgpu() -> (wgpu::Device, wgpu::Queue) {
+	let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+		backends: wgpu::Backends::all(),
+		flags: wgpu::InstanceFlags::from_build_config(),
+		memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
+		backend_options: wgpu::BackendOptions::default(),
+	});
+
+	let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+		power_preference: wgpu::PowerPreference::HighPerformance,
+		force_fallback_adapter: false,
+		compatible_surface: None,
+	}))
+	.unwrap();
+
+	pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+		label: None,
+		required_features: wgpu::Features::TEXTURE_COMPRESSION_BC,
+		memory_hints: wgpu::MemoryHints::MemoryUsage,
+		..Default::default()
+	}))
+	.unwrap()
+}
+
 #[repr(u32)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "pyo3", pyclass)]
@@ -283,6 +312,26 @@ impl Texture {
 			&& self.mipmaps_count() == 2
 			&& self.get_mipmap(0, 0).unwrap().format() == Format::BC5
 			&& self.get_mipmap(0, 1).unwrap().format() == Format::BC5
+	}
+
+	#[cfg(all(feature = "pyo3", feature = "wgpu"))]
+	#[cfg_attr(feature = "pyo3", staticmethod)]
+	pub fn py_from_rgba_gpu(width: i32, height: i32, data: &[u8], format: Format) -> Option<Self> {
+		let (device, queue) = WGPU_RESOURCES.get_or_init(init_wgpu);
+		let mip = Mipmap::from_rgba_gpu(width, height, data, format, device, queue)?;
+		let mut tex = Self::new();
+		tex.set_has_cube_map(false);
+		tex.set_array_size(1);
+		tex.set_mipmaps_count(1);
+		tex.add_mipmap(&mip);
+		Some(tex)
+	}
+
+	#[cfg(all(feature = "pyo3", feature = "wgpu"))]
+	#[cfg_attr(feature = "pyo3", staticmethod)]
+	pub fn py_ycbcr_from_rgba_gpu(width: u32, height: u32, data: &[u8]) -> Option<Self> {
+		let (device, queue) = WGPU_RESOURCES.get_or_init(init_wgpu);
+		Self::encode_ycbcr(width, height, data, device, queue)
 	}
 }
 
@@ -1361,6 +1410,13 @@ impl Mipmap {
 
 		mip.set_data(&mip_data);
 		Some(mip)
+	}
+
+	#[cfg(all(feature = "pyo3", feature = "wgpu"))]
+	#[cfg_attr(feature = "pyo3", staticmethod)]
+	pub fn py_from_rgba_gpu(width: i32, height: i32, data: &[u8], format: Format) -> Option<Self> {
+		let (device, queue) = WGPU_RESOURCES.get_or_init(init_wgpu);
+		Self::from_rgba_gpu(width, height, data, format, device, queue)
 	}
 }
 

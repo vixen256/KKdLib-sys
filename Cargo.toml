@@ -14,7 +14,8 @@ block_compression = { version = "0.7", optional = true }
 directxtex = { version = "1.3", optional = true }
 image = { version = "0.25", default-features = false, optional = true }
 libdeflate-sys = "1.25"
-pyo3 = { version = "0.27", features = ["abi3", "extension-module", "generate-import-lib"], optional = true }
+pollster = { version = "0.4", optional = true }
+pyo3 = { version = "0.27", features = ["abi3-py39", "extension-module", "generate-import-lib"], optional = true }
 wgpu = { version = "27.0", default-features = false, optional = true }
 
 [build-dependencies]
@@ -24,6 +25,7 @@ libdeflate-sys = "1.25"
 [features]
 default = ["wgpu"]
 directxtex = ["dep:directxtex"]
+pyo3 = ["dep:pollster", "dep:pyo3"]
 wgpu = ["dep:block_compression", "dep:image", "dep:wgpu"]
 
 [profile.release]

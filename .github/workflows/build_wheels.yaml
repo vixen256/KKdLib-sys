@@ -20,6 +20,9 @@ jobs:
         with:
           python-version: 3.x
 
+      - name: Set rust nightly
+        run: rustup override set nightly
+
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:

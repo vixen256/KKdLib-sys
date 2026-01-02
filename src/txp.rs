@@ -13,6 +13,8 @@ use pyo3::prelude::*;
 #[cfg(feature = "pyo3")]
 #[cfg_attr(feature = "pyo3", pymodule(name = "txp"))]
 pub(crate) mod txp_module {
+	use pyo3::prelude::*;
+
 	#[pymodule_export]
 	use super::Format;
 	#[pymodule_export]
@@ -23,6 +25,12 @@ pub(crate) mod txp_module {
 	use super::Set;
 	#[pymodule_export]
 	use super::Texture;
+
+	#[cfg(feature = "wgpu")]
+	#[pyfunction]
+	fn init_wgpu() {
+		std::thread::spawn(|| super::WGPU_RESOURCES.set(super::init_wgpu()));
+	}
 }
 
 #[cfg(all(feature = "pyo3", feature = "wgpu"))]

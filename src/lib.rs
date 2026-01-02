@@ -191,7 +191,7 @@ mod tests {
 	#[test]
 	fn aet() {
 		let data = std::fs::read("/games/SteamLibrary/steamapps/common/Hatsune Miku Project DIVA Mega Mix Plus/mods/PS4 FT UI/rom_steam_en/rom/2d/aet_nswgam_option.bin.bak").unwrap();
-		let file = aet::Set::from_buf(&data);
+		let file = aet::Set::from_buf(&data, false);
 		for layer in &file.scenes[0].root.layers {
 			if layer.name != "option_top_menu_display" {
 				continue;

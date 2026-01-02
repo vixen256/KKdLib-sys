@@ -4,6 +4,9 @@ use std::marker::PhantomData;
 #[cfg(feature = "directxtex")]
 use directxtex::*;
 
+#[cfg(feature = "wgpu")]
+use wgpu::util::DeviceExt;
+
 #[cfg(feature = "pyo3")]
 use pyo3::prelude::*;
 
@@ -305,7 +308,7 @@ impl Texture {
 	}
 }
 
-#[cfg(not(feature = "directxtex"))]
+#[cfg(not(any(feature = "directxtex", feature = "wgpu")))]
 impl Texture {
 	pub fn decode_ycbcr(&self) -> Option<Vec<u8>> {
 		None
@@ -313,6 +316,270 @@ impl Texture {
 
 	pub fn encode_ycbcr(width: i32, height: i32, data: &[u8]) -> Option<Self> {
 		None
+	}
+}
+
+#[cfg(all(feature = "wgpu", not(feature = "directxtex")))]
+impl Texture {
+	pub fn decode_ycbcr(&self) -> Option<Vec<u8>> {
+		if !self.is_ycbcr() {
+			return None;
+		}
+
+		let ya_mip = self.get_mipmap(0, 0)?;
+		let ya_data = ya_mip.data()?;
+		let cbcr_mip = self.get_mipmap(0, 1)?;
+		let cbcr_data = cbcr_mip.data()?;
+
+		let mut ya_out = Vec::with_capacity(ya_mip.width() as usize * ya_mip.height() as usize * 2);
+		ya_out.resize(ya_mip.width() as usize * ya_mip.height() as usize * 2, 0);
+		let mut cbcr_out =
+			Vec::with_capacity(cbcr_mip.width() as usize * cbcr_mip.height() as usize * 2);
+		cbcr_out.resize(
+			cbcr_mip.width() as usize * cbcr_mip.height() as usize * 2,
+			0,
+		);
+
+		let pitch = ya_mip.width() as usize * 2;
+		let w = ya_mip.width() as usize / 4;
+		let h = ya_mip.height() as usize / 4;
+		for y in 0..h {
+			for x in 0..w {
+				let block_start = (y * w + x) * 16;
+
+				let x_offset = x * 4 * 2;
+				let y_offset = y * 4 * pitch;
+				block_compression::decode::decode_block_bc5(
+					&ya_data[block_start..],
+					&mut ya_out[(y_offset + x_offset)..],
+					pitch,
+				);
+			}
+		}
+
+		let pitch = cbcr_mip.width() as usize * 2;
+		let w = cbcr_mip.width() as usize / 4;
+		let h = cbcr_mip.height() as usize / 4;
+		for y in 0..h {
+			for x in 0..w {
+				let block_start = (y * w + x) * 16;
+
+				let x_offset = x * 4 * 2;
+				let y_offset = y * 4 * pitch;
+				block_compression::decode::decode_block_bc5(
+					&cbcr_data[block_start..],
+					&mut cbcr_out[(y_offset + x_offset)..],
+					pitch,
+				);
+			}
+		}
+
+		let cbcr_buffer = image::ImageBuffer::<image::LumaA<u8>, Vec<u8>>::from_raw(
+			cbcr_mip.width() as u32,
+			cbcr_mip.height() as u32,
+			cbcr_out,
+		)?;
+		let cbcr_buffer = image::DynamicImage::ImageLumaA8(cbcr_buffer).resize(
+			ya_mip.width() as u32,
+			ya_mip.height() as u32,
+			image::imageops::FilterType::Lanczos3,
+		);
+		let cbcr_buffer = cbcr_buffer.as_bytes();
+
+		let mut out = Vec::with_capacity(ya_mip.width() as usize * ya_mip.height() as usize * 4);
+		out.resize(ya_mip.width() as usize * ya_mip.height() as usize * 4, 0);
+		for i in 0..(ya_mip.height() as usize * ya_mip.width() as usize) {
+			let y = ya_out[i * 2 + 0] as f32 / 255.0;
+			let a = ya_out[i * 2 + 1] as f32 / 255.0;
+			let cb = cbcr_buffer[i * 2 + 0] as f32 / 255.0 * ycbcr::CBCR_MUL - ycbcr::CBCR_SUB;
+			let cr = cbcr_buffer[i * 2 + 1] as f32 / 255.0 * ycbcr::CBCR_MUL - ycbcr::CBCR_SUB;
+
+			let r = y * ycbcr::DECODE[0][0] + cb * ycbcr::DECODE[0][1] + cr * ycbcr::DECODE[0][2];
+			let g = y * ycbcr::DECODE[1][0] + cb * ycbcr::DECODE[1][1] + cr * ycbcr::DECODE[1][2];
+			let b = y * ycbcr::DECODE[2][0] + cb * ycbcr::DECODE[2][1] + cr * ycbcr::DECODE[2][2];
+
+			out[i * 4 + 0] = (r * 255.0) as u8;
+			out[i * 4 + 1] = (g * 255.0) as u8;
+			out[i * 4 + 2] = (b * 255.0) as u8;
+			out[i * 4 + 3] = (a * 255.0) as u8;
+		}
+
+		Some(out)
+	}
+
+	pub fn encode_ycbcr(
+		width: u32,
+		height: u32,
+		data: &[u8],
+		device: &wgpu::Device,
+		queue: &wgpu::Queue,
+	) -> Option<Self> {
+		let mut ya_raw = Vec::with_capacity(width as usize * height as usize * 2);
+		let mut cbcr_raw = Vec::with_capacity(width as usize * height as usize * 2);
+
+		for i in 0..(height as usize * width as usize) {
+			let r = data[i * 4 + 0] as f32 / 255.0;
+			let g = data[i * 4 + 1] as f32 / 255.0;
+			let b = data[i * 4 + 2] as f32 / 255.0;
+			let a = data[i * 4 + 3] as f32 / 255.0;
+
+			let y = r * ycbcr::ENCODE[0][0] + g * ycbcr::ENCODE[0][1] + b * ycbcr::ENCODE[0][2];
+			let cb = r * ycbcr::ENCODE[1][0]
+				+ g * ycbcr::ENCODE[1][1]
+				+ b * ycbcr::ENCODE[1][2]
+				+ ycbcr::CBCR_SUB;
+			let cr = r * ycbcr::ENCODE[2][0]
+				+ g * ycbcr::ENCODE[2][1]
+				+ b * ycbcr::ENCODE[2][2]
+				+ ycbcr::CBCR_SUB;
+
+			ya_raw.push((y * 255.0) as u8);
+			ya_raw.push((a * 255.0) as u8);
+			cbcr_raw.push((cb / ycbcr::CBCR_MUL * 255.0) as u8);
+			cbcr_raw.push((cr / ycbcr::CBCR_MUL * 255.0) as u8);
+		}
+
+		let awidth = (width + 4 - 1) / 4 * 4;
+		let aheight = (height + 4 - 1) / 4 * 4;
+		ya_raw.resize(awidth as usize * aheight as usize * 2, 0);
+
+		let hwidth = (width / 2 + 4 - 1) / 4 * 4;
+		let hheight = (height / 2 + 4 - 1) / 4 * 4;
+		cbcr_raw.resize(hwidth as usize * 2 * hheight as usize * 2 * 2, 128);
+
+		let cbcr_buffer = image::ImageBuffer::<image::LumaA<u8>, Vec<u8>>::from_raw(
+			hwidth * 2,
+			hheight * 2,
+			cbcr_raw,
+		)?;
+		let cbcr_buffer = image::DynamicImage::ImageLumaA8(cbcr_buffer).resize(
+			hwidth,
+			hheight,
+			image::imageops::FilterType::Lanczos3,
+		);
+
+		let format = block_compression::CompressionVariant::BC5;
+		let size =
+			format.blocks_byte_size(awidth, aheight) + format.blocks_byte_size(hwidth, hheight);
+
+		let ya = device.create_texture_with_data(
+			queue,
+			&wgpu::TextureDescriptor {
+				size: wgpu::Extent3d {
+					width: awidth,
+					height: aheight,
+					depth_or_array_layers: 1,
+				},
+				mip_level_count: 1,
+				sample_count: 1,
+				dimension: wgpu::TextureDimension::D2,
+				format: wgpu::TextureFormat::Rg8Unorm,
+				usage: wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::TEXTURE_BINDING,
+				label: None,
+				view_formats: &[],
+			},
+			wgpu::util::TextureDataOrder::LayerMajor,
+			&ya_raw,
+		);
+		let ya_view = ya.create_view(&wgpu::TextureViewDescriptor::default());
+
+		let cbcr = device.create_texture_with_data(
+			queue,
+			&wgpu::TextureDescriptor {
+				size: wgpu::Extent3d {
+					width: hwidth,
+					height: hheight,
+					depth_or_array_layers: 1,
+				},
+				mip_level_count: 1,
+				sample_count: 1,
+				dimension: wgpu::TextureDimension::D2,
+				format: wgpu::TextureFormat::Rg8Unorm,
+				usage: wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::TEXTURE_BINDING,
+				label: None,
+				view_formats: &[],
+			},
+			wgpu::util::TextureDataOrder::LayerMajor,
+			cbcr_buffer.as_bytes(),
+		);
+		let cbcr_view = cbcr.create_view(&wgpu::TextureViewDescriptor::default());
+
+		let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+			label: None,
+			size: size as wgpu::BufferAddress,
+			usage: wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::STORAGE,
+			mapped_at_creation: false,
+		});
+
+		let map_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+			label: None,
+			size: buffer.size(),
+			usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+			mapped_at_creation: false,
+		});
+
+		let mut encoder =
+			device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+		let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+			label: None,
+			timestamp_writes: None,
+		});
+
+		let mut compresser =
+			block_compression::GpuBlockCompressor::new(device.clone(), queue.clone());
+		compresser.add_compression_task(format, &ya_view, awidth, aheight, &buffer, None, None);
+		compresser.add_compression_task(
+			format,
+			&cbcr_view,
+			hwidth,
+			hheight,
+			&buffer,
+			None,
+			Some(format.blocks_byte_size(awidth, aheight) as u32),
+		);
+		compresser.compress(&mut compute_pass);
+
+		drop(compute_pass);
+
+		encoder.copy_buffer_to_buffer(&buffer, 0, &map_buffer, 0, buffer.size());
+
+		let (tx, rx) = std::sync::mpsc::channel();
+
+		encoder.map_buffer_on_submit(&map_buffer, wgpu::MapMode::Read, .., move |res| {
+			tx.send(res).unwrap()
+		});
+
+		queue.submit([encoder.finish()]);
+		device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+
+		let Ok(Ok(())) = rx.recv() else {
+			return None;
+		};
+		let data = map_buffer.get_mapped_range(..);
+
+		let mut texture = Self::new();
+		texture.set_has_cube_map(false);
+		texture.set_array_size(1);
+		texture.set_mipmaps_count(2);
+
+		let mut y_mip = Mipmap::new();
+		y_mip.set_width(awidth as i32);
+		y_mip.set_height(aheight as i32);
+		y_mip.set_format(Format::BC5);
+		y_mip.set_data(&data[..(format.blocks_byte_size(awidth, aheight))]);
+		texture.add_mipmap(&y_mip);
+
+		let mut cbcr_mip = Mipmap::new();
+		cbcr_mip.set_width(hwidth as i32);
+		cbcr_mip.set_height(hheight as i32);
+		cbcr_mip.set_format(Format::BC5);
+		cbcr_mip.set_data(&data[(format.blocks_byte_size(awidth, aheight))..]);
+		texture.add_mipmap(&cbcr_mip);
+
+		drop(data);
+		map_buffer.unmap();
+
+		Some(texture)
 	}
 }
 
@@ -828,6 +1095,37 @@ impl Mipmap {
 			| Format::BC5
 			| Format::BC7
 			| Format::BC6H => {
+				#[cfg(all(feature = "wgpu", not(feature = "directxtex")))]
+				{
+					let fmt = match self.format() {
+						Format::BC1 | Format::BC1a => block_compression::CompressionVariant::BC1,
+						Format::BC2 => block_compression::CompressionVariant::BC2,
+						Format::BC3 => block_compression::CompressionVariant::BC3,
+						Format::BC4 => block_compression::CompressionVariant::BC4,
+						Format::BC5 => block_compression::CompressionVariant::BC5,
+						Format::BC7 => block_compression::CompressionVariant::BC7(
+							block_compression::BC7Settings::alpha_slow(),
+						),
+						Format::BC6H => block_compression::CompressionVariant::BC6H(
+							block_compression::BC6HSettings::very_slow(),
+						),
+						_ => unreachable!(),
+					};
+
+					block_compression::decode::decompress_blocks_as_rgba8(
+						fmt,
+						self.width() as u32,
+						self.height() as u32,
+						data,
+						&mut out,
+					);
+
+					if self.format() == Format::BC5 {
+						for i in 0..(size as usize / 4) {
+							out[i * 4 + 2] = 0xFF;
+						}
+					}
+				}
 				#[cfg(feature = "directxtex")]
 				{
 					let mut scratch = ScratchImage::default();
@@ -863,7 +1161,7 @@ impl Mipmap {
 						}
 					}
 				}
-				#[cfg(not(feature = "directxtex"))]
+				#[cfg(all(not(feature = "directxtex"), not(feature = "wgpu")))]
 				return None;
 			}
 			Format::L8 => {
@@ -969,6 +1267,32 @@ impl Mipmap {
 			| Format::BC5
 			| Format::BC7
 			| Format::BC6H => {
+				#[cfg(all(feature = "wgpu", not(feature = "directxtex")))]
+				{
+					let fmt = match format {
+						Format::BC1 | Format::BC1a => block_compression::CompressionVariant::BC1,
+						Format::BC2 => block_compression::CompressionVariant::BC2,
+						Format::BC3 => block_compression::CompressionVariant::BC3,
+						Format::BC4 => block_compression::CompressionVariant::BC4,
+						Format::BC5 => block_compression::CompressionVariant::BC5,
+						Format::BC7 => block_compression::CompressionVariant::BC7(
+							block_compression::BC7Settings::alpha_slow(),
+						),
+						Format::BC6H => block_compression::CompressionVariant::BC6H(
+							block_compression::BC6HSettings::very_slow(),
+						),
+						_ => unreachable!(),
+					};
+
+					block_compression::encode::compress_rgba8(
+						fmt,
+						data,
+						&mut mip_data,
+						width as u32,
+						height as u32,
+						width as u32 * 4,
+					);
+				}
 				#[cfg(feature = "directxtex")]
 				{
 					let mut scratch = ScratchImage::default();
@@ -1003,7 +1327,7 @@ impl Mipmap {
 
 					mip_data.copy_from_slice(compressed.pixels());
 				}
-				#[cfg(not(feature = "directxtex"))]
+				#[cfg(all(not(feature = "directxtex"), not(feature = "wgpu")))]
 				return None;
 			}
 			Format::L8 => {
@@ -1036,6 +1360,119 @@ impl Mipmap {
 		}
 
 		mip.set_data(&mip_data);
+		Some(mip)
+	}
+}
+
+#[cfg(all(feature = "wgpu"))]
+impl Mipmap {
+	pub fn from_rgba_gpu(
+		width: i32,
+		height: i32,
+		data: &[u8],
+		format: Format,
+		device: &wgpu::Device,
+		queue: &wgpu::Queue,
+	) -> Option<Self> {
+		let fmt = match format {
+			Format::BC1 | Format::BC1a => block_compression::CompressionVariant::BC1,
+			Format::BC2 => block_compression::CompressionVariant::BC2,
+			Format::BC3 => block_compression::CompressionVariant::BC3,
+			Format::BC4 => block_compression::CompressionVariant::BC4,
+			Format::BC5 => block_compression::CompressionVariant::BC5,
+			Format::BC7 => block_compression::CompressionVariant::BC7(
+				block_compression::BC7Settings::alpha_slow(),
+			),
+			Format::BC6H => block_compression::CompressionVariant::BC6H(
+				block_compression::BC6HSettings::very_slow(),
+			),
+			_ => return Self::from_rgba(width, height, data, format),
+		};
+
+		let size = fmt.blocks_byte_size(width as u32, height as u32);
+
+		let texture = device.create_texture_with_data(
+			queue,
+			&wgpu::TextureDescriptor {
+				size: wgpu::Extent3d {
+					width: width as u32,
+					height: height as u32,
+					depth_or_array_layers: 1,
+				},
+				mip_level_count: 1,
+				sample_count: 1,
+				dimension: wgpu::TextureDimension::D2,
+				format: wgpu::TextureFormat::Rgba8Unorm,
+				usage: wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::TEXTURE_BINDING,
+				label: None,
+				view_formats: &[],
+			},
+			wgpu::util::TextureDataOrder::LayerMajor,
+			data,
+		);
+		let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+		let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+			label: None,
+			size: size as wgpu::BufferAddress,
+			usage: wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::STORAGE,
+			mapped_at_creation: false,
+		});
+
+		let map_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+			label: None,
+			size: buffer.size(),
+			usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+			mapped_at_creation: false,
+		});
+
+		let mut encoder =
+			device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+		let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+			label: None,
+			timestamp_writes: None,
+		});
+
+		let mut compresser =
+			block_compression::GpuBlockCompressor::new(device.clone(), queue.clone());
+		compresser.add_compression_task(
+			fmt,
+			&view,
+			width as u32,
+			height as u32,
+			&buffer,
+			None,
+			None,
+		);
+		compresser.compress(&mut compute_pass);
+
+		drop(compute_pass);
+
+		encoder.copy_buffer_to_buffer(&buffer, 0, &map_buffer, 0, buffer.size());
+
+		let (tx, rx) = std::sync::mpsc::channel();
+
+		encoder.map_buffer_on_submit(&map_buffer, wgpu::MapMode::Read, .., move |res| {
+			tx.send(res).unwrap()
+		});
+
+		queue.submit([encoder.finish()]);
+		device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+
+		let Ok(Ok(())) = rx.recv() else {
+			return None;
+		};
+		let data = map_buffer.get_mapped_range(..);
+
+		let mut mip = Mipmap::new();
+		mip.set_width(width);
+		mip.set_height(height);
+		mip.set_format(format);
+		mip.set_data(&data);
+
+		drop(data);
+		map_buffer.unmap();
+
 		Some(mip)
 	}
 }

@@ -1366,6 +1366,116 @@ impl Mipmap {
 
 #[cfg(all(feature = "wgpu"))]
 impl Mipmap {
+	pub fn to_rgba_gpu(&self, device: &wgpu::Device, queue: &wgpu::Queue) -> Option<Vec<u8>> {
+		let format = match self.format() {
+			Format::BC1 | Format::BC1a => wgpu::TextureFormat::Bc1RgbaUnorm,
+			Format::BC2 => wgpu::TextureFormat::Bc2RgbaUnorm,
+			Format::BC3 => wgpu::TextureFormat::Bc3RgbaUnorm,
+			Format::BC4 => wgpu::TextureFormat::Bc4RSnorm,
+			Format::BC5 => wgpu::TextureFormat::Bc5RgUnorm,
+			Format::BC7 => wgpu::TextureFormat::Bc7RgbaUnorm,
+			Format::BC6H => wgpu::TextureFormat::Bc6hRgbUfloat,
+			_ => return self.rgba(),
+		};
+
+		let size = wgpu::Extent3d {
+			width: self.width() as u32,
+			height: self.height() as u32,
+			depth_or_array_layers: 1,
+		};
+
+		let texture = device.create_texture_with_data(
+			queue,
+			&wgpu::TextureDescriptor {
+				size,
+				mip_level_count: 1,
+				sample_count: 1,
+				dimension: wgpu::TextureDimension::D2,
+				format,
+				usage: wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::TEXTURE_BINDING,
+				label: None,
+				view_formats: &[],
+			},
+			wgpu::util::TextureDataOrder::LayerMajor,
+			self.data()?,
+		);
+
+		let in_view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+		let out_texture = device.create_texture(&wgpu::TextureDescriptor {
+			size,
+			mip_level_count: 1,
+			sample_count: 1,
+			dimension: wgpu::TextureDimension::D2,
+			format: wgpu::TextureFormat::Rgba8Unorm,
+			usage: wgpu::TextureUsages::COPY_SRC | wgpu::TextureUsages::RENDER_ATTACHMENT,
+			label: None,
+			view_formats: &[],
+		});
+
+		let out_view = out_texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+		let pitch = (self.width() as u32 * 4).next_multiple_of(256);
+		let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+			label: None,
+			size: (pitch * self.height() as u32) as wgpu::BufferAddress,
+			usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+			mapped_at_creation: false,
+		});
+
+		let mut encoder =
+			device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+
+		let blitter = wgpu::util::TextureBlitter::new(device, wgpu::TextureFormat::Rgba8Unorm);
+		blitter.copy(device, &mut encoder, &in_view, &out_view);
+
+		encoder.copy_texture_to_buffer(
+			wgpu::TexelCopyTextureInfo {
+				texture: &out_texture,
+				mip_level: 0,
+				origin: wgpu::Origin3d::ZERO,
+				aspect: wgpu::TextureAspect::All,
+			},
+			wgpu::TexelCopyBufferInfo {
+				buffer: &buffer,
+				layout: wgpu::TexelCopyBufferLayout {
+					offset: 0,
+					bytes_per_row: Some(pitch),
+					rows_per_image: Some(self.height() as u32),
+				},
+			},
+			size,
+		);
+
+		let (tx, rx) = std::sync::mpsc::channel();
+
+		encoder.map_buffer_on_submit(&buffer, wgpu::MapMode::Read, .., move |res| {
+			tx.send(res).unwrap()
+		});
+
+		queue.submit([encoder.finish()]);
+		device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+
+		let Ok(Ok(())) = rx.recv() else {
+			return None;
+		};
+
+		let data = buffer.get_mapped_range(..);
+		let mut out = Vec::with_capacity(self.width() as usize * self.height() as usize * 4);
+		out.resize(self.width() as usize * self.height() as usize * 4, 0);
+		for y in 0..(self.height() as usize) {
+			let row =
+				&mut out[(y * self.width() as usize * 4)..((y + 1) * self.width() as usize * 4)];
+			row.copy_from_slice(
+				&data[(y * pitch as usize)..(y * pitch as usize + self.width() as usize * 4)],
+			);
+		}
+		drop(data);
+		buffer.unmap();
+
+		Some(out)
+	}
+
 	pub fn from_rgba_gpu(
 		width: i32,
 		height: i32,
@@ -1525,6 +1635,13 @@ impl<'a> MipmapRef<'a> {
 
 	pub fn rgba(&self) -> Option<Vec<u8>> {
 		Mipmap::rgba(unsafe { std::mem::transmute(self) })
+	}
+}
+
+#[cfg(all(feature = "wgpu"))]
+impl MipmapRef<'_> {
+	pub fn to_rgba_gpu(&self, device: &wgpu::Device, queue: &wgpu::Queue) -> Option<Vec<u8>> {
+		Mipmap::to_rgba_gpu(unsafe { std::mem::transmute(self) }, device, queue)
 	}
 }
 

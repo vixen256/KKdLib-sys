@@ -123,7 +123,7 @@ pub(crate) mod ycbcr {
 	// NOTE: These are the coeffs for sprites
 	// The coeeffs for *sky* textures are 256.0001 / 255.0 and 128.5019 / 255.0
 	pub const CBCR_MUL: f32 = 256.0 / 255.0;
-	pub const CBCR_SUB: f32 = 128.50196 / 255.0;
+	pub const CBCR_SUB: f32 = 128.0 / 255.0 * CBCR_MUL;
 	pub const KB: f32 = 0.0722;
 	pub const KR: f32 = 0.2126;
 	pub const KG: f32 = 1.0 - KB - KR;

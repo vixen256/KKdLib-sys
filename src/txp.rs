@@ -471,38 +471,41 @@ impl Texture {
 		device: &wgpu::Device,
 		queue: &wgpu::Queue,
 	) -> Option<Self> {
-		let mut ya_raw = Vec::with_capacity(width as usize * height as usize * 2);
-		let mut cbcr_raw = Vec::with_capacity(width as usize * height as usize * 2);
-
-		for i in 0..(height as usize * width as usize) {
-			let r = data[i * 4 + 0] as f32 / 255.0;
-			let g = data[i * 4 + 1] as f32 / 255.0;
-			let b = data[i * 4 + 2] as f32 / 255.0;
-			let a = data[i * 4 + 3] as f32 / 255.0;
-
-			let y = r * ycbcr::ENCODE[0][0] + g * ycbcr::ENCODE[0][1] + b * ycbcr::ENCODE[0][2];
-			let cb = r * ycbcr::ENCODE[1][0]
-				+ g * ycbcr::ENCODE[1][1]
-				+ b * ycbcr::ENCODE[1][2]
-				+ ycbcr::CBCR_SUB;
-			let cr = r * ycbcr::ENCODE[2][0]
-				+ g * ycbcr::ENCODE[2][1]
-				+ b * ycbcr::ENCODE[2][2]
-				+ ycbcr::CBCR_SUB;
-
-			ya_raw.push((y * 255.0) as u8);
-			ya_raw.push((a * 255.0) as u8);
-			cbcr_raw.push((cb / ycbcr::CBCR_MUL * 255.0) as u8);
-			cbcr_raw.push((cr / ycbcr::CBCR_MUL * 255.0) as u8);
-		}
-
 		let awidth = (width + 4 - 1) / 4 * 4;
 		let aheight = (height + 4 - 1) / 4 * 4;
-		ya_raw.resize(awidth as usize * aheight as usize * 2, 0);
-
 		let hwidth = (width / 2 + 4 - 1) / 4 * 4;
 		let hheight = (height / 2 + 4 - 1) / 4 * 4;
+		let mut ya_raw = Vec::with_capacity(awidth as usize * aheight as usize * 2);
+		let mut cbcr_raw = Vec::with_capacity(hwidth as usize * 2 * hheight as usize * 2 * 2);
+		ya_raw.resize(awidth as usize * aheight as usize * 2, 0);
 		cbcr_raw.resize(hwidth as usize * 2 * hheight as usize * 2 * 2, 128);
+
+		for y in 0..(height.min(hheight * 2)) {
+			for x in 0..(width.min(hwidth * 2)) {
+				let i = (y * width + x) as usize;
+				let r = data[i * 4 + 0] as f32 / 255.0;
+				let g = data[i * 4 + 1] as f32 / 255.0;
+				let b = data[i * 4 + 2] as f32 / 255.0;
+
+				let luma =
+					r * ycbcr::ENCODE[0][0] + g * ycbcr::ENCODE[0][1] + b * ycbcr::ENCODE[0][2];
+				let cb = r * ycbcr::ENCODE[1][0]
+					+ g * ycbcr::ENCODE[1][1]
+					+ b * ycbcr::ENCODE[1][2]
+					+ ycbcr::CBCR_SUB;
+				let cr = r * ycbcr::ENCODE[2][0]
+					+ g * ycbcr::ENCODE[2][1]
+					+ b * ycbcr::ENCODE[2][2]
+					+ ycbcr::CBCR_SUB;
+
+				ya_raw[((y * awidth + x) * 2 + 0) as usize] = (luma * 255.0) as u8;
+				ya_raw[((y * awidth + x) * 2 + 1) as usize] = data[i * 4 + 3];
+				cbcr_raw[((y * hwidth * 2 + x) * 2 + 0) as usize] =
+					(cb / ycbcr::CBCR_MUL * 255.0) as u8;
+				cbcr_raw[((y * hwidth * 2 + x) * 2 + 1) as usize] =
+					(cr / ycbcr::CBCR_MUL * 255.0) as u8;
+			}
+		}
 
 		let cbcr_buffer = image::ImageBuffer::<image::LumaA<u8>, Vec<u8>>::from_raw(
 			hwidth * 2,
@@ -1563,14 +1566,27 @@ impl Mipmap {
 			_ => return Self::from_rgba(width, height, data, format),
 		};
 
-		let size = fmt.blocks_byte_size(width as u32, height as u32);
+		let awidth = width - (width % 4);
+		let aheight = height - (height % 4);
+		let mut new_data = Vec::with_capacity(awidth as usize * aheight as usize * 4);
+		new_data.resize(awidth as usize * aheight as usize * 4, 0);
+		for y in 0..aheight {
+			new_data[(y as usize * awidth as usize * 4)
+				..(y as usize * awidth as usize * 4 + width as usize * 4)]
+				.copy_from_slice(
+					&data[(y as usize * width as usize * 4)
+						..(y as usize * width as usize * 4 + width as usize * 4)],
+				);
+		}
+
+		let size = fmt.blocks_byte_size(awidth as u32, aheight as u32);
 
 		let texture = device.create_texture_with_data(
 			queue,
 			&wgpu::TextureDescriptor {
 				size: wgpu::Extent3d {
-					width: width as u32,
-					height: height as u32,
+					width: awidth as u32,
+					height: aheight as u32,
 					depth_or_array_layers: 1,
 				},
 				mip_level_count: 1,
@@ -1582,7 +1598,7 @@ impl Mipmap {
 				view_formats: &[],
 			},
 			wgpu::util::TextureDataOrder::LayerMajor,
-			data,
+			&new_data,
 		);
 		let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
 
@@ -1612,8 +1628,8 @@ impl Mipmap {
 		compresser.add_compression_task(
 			fmt,
 			&view,
-			width as u32,
-			height as u32,
+			awidth as u32,
+			aheight as u32,
 			&buffer,
 			None,
 			None,
@@ -1639,8 +1655,8 @@ impl Mipmap {
 		let data = map_buffer.get_mapped_range(..);
 
 		let mut mip = Mipmap::new();
-		mip.set_width(width);
-		mip.set_height(height);
+		mip.set_width(awidth);
+		mip.set_height(aheight);
 		mip.set_format(format);
 		mip.set_data(&data);
 

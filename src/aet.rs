@@ -99,7 +99,7 @@ impl FCurve {
 		} else if frame >= self.keys.last().unwrap().frame {
 			self.keys.last().unwrap().value
 		} else {
-			for (cur, next) in self.keys.iter().zip(self.keys.iter().skip(1)) {
+			for [cur, next] in self.keys.array_windows() {
 				if next.frame >= frame {
 					let (f1, p1, t1) = (cur.frame, cur.value, cur.tangent);
 					let (f2, p2, t2) = (next.frame, next.value, next.tangent);

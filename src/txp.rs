@@ -206,7 +206,7 @@ impl Set {
 			};
 		};
 
-		if ptr == std::ptr::null_mut() || size == 0 {
+		if ptr.is_null() || size == 0 {
 			return None;
 		}
 
@@ -346,7 +346,7 @@ impl Texture {
 impl Texture {
 	pub fn get_mipmap<'a>(&'a self, array_index: i32, mipmap_index: i32) -> Option<MipmapRef<'a>> {
 		let ptr = unsafe { kkdlib_txp_get_mipmap(self.ptr, array_index, mipmap_index) };
-		if ptr == std::ptr::null_mut() {
+		if ptr.is_null() {
 			return None;
 		}
 		Some(MipmapRef {
@@ -388,14 +388,8 @@ impl Texture {
 		let cbcr_mip = self.get_mipmap(0, 1)?;
 		let cbcr_data = cbcr_mip.data()?;
 
-		let mut ya_out = Vec::with_capacity(ya_mip.width() as usize * ya_mip.height() as usize * 2);
-		ya_out.resize(ya_mip.width() as usize * ya_mip.height() as usize * 2, 0);
-		let mut cbcr_out =
-			Vec::with_capacity(cbcr_mip.width() as usize * cbcr_mip.height() as usize * 2);
-		cbcr_out.resize(
-			cbcr_mip.width() as usize * cbcr_mip.height() as usize * 2,
-			0,
-		);
+		let mut ya_out = vec![0; ya_mip.width() as usize * ya_mip.height() as usize * 2];
+		let mut cbcr_out = vec![0; cbcr_mip.width() as usize * cbcr_mip.height() as usize * 2];
 
 		let pitch = ya_mip.width() as usize * 2;
 		let w = ya_mip.width() as usize / 4;
@@ -443,8 +437,7 @@ impl Texture {
 		);
 		let cbcr_buffer = cbcr_buffer.as_bytes();
 
-		let mut out = Vec::with_capacity(ya_mip.width() as usize * ya_mip.height() as usize * 4);
-		out.resize(ya_mip.width() as usize * ya_mip.height() as usize * 4, 0);
+		let mut out = vec![0; ya_mip.width() as usize * ya_mip.height() as usize * 4];
 		for i in 0..(ya_mip.height() as usize * ya_mip.width() as usize) {
 			let y = ya_out[i * 2 + 0] as f32 / 255.0;
 			let a = ya_out[i * 2 + 1] as f32 / 255.0;
@@ -475,10 +468,8 @@ impl Texture {
 		let aheight = (height + 4 - 1) / 4 * 4;
 		let hwidth = (width / 2 + 4 - 1) / 4 * 4;
 		let hheight = (height / 2 + 4 - 1) / 4 * 4;
-		let mut ya_raw = Vec::with_capacity(awidth as usize * aheight as usize * 2);
-		let mut cbcr_raw = Vec::with_capacity(hwidth as usize * 2 * hheight as usize * 2 * 2);
-		ya_raw.resize(awidth as usize * aheight as usize * 2, 0);
-		cbcr_raw.resize(hwidth as usize * 2 * hheight as usize * 2 * 2, 128);
+		let mut ya_raw = vec![0; awidth as usize * aheight as usize * 2];
+		let mut cbcr_raw = vec![128; hwidth as usize * 2 * hheight as usize * 2 * 2];
 
 		for y in 0..(height.min(hheight * 2)) {
 			for x in 0..(width.min(hwidth * 2)) {
@@ -704,8 +695,7 @@ impl Texture {
 		);
 		let chroma = unsafe { chroma.as_ref()? };
 
-		let mut out = Vec::with_capacity(y_mip.width() as usize * y_mip.height() as usize * 4);
-		out.resize(y_mip.width() as usize * y_mip.height() as usize * 4, 0);
+		let mut out = vec![0; y_mip.width() as usize * y_mip.height() as usize * 4];
 		for i in 0..(y_mip.height() as usize * y_mip.width() as usize) {
 			let y = luma[i * 2 + 0];
 			let a = luma[i * 2 + 1];
@@ -994,7 +984,7 @@ impl<'a> Iterator for TextureIterator<'a> {
 		}
 
 		let ptr = unsafe { kkdlib_txp_set_get_texture_by_index(self.ptr, self.index) };
-		if ptr == std::ptr::null_mut() {
+		if ptr.is_null() {
 			return None;
 		}
 
@@ -1065,7 +1055,7 @@ impl Mipmap {
 
 	pub fn data<'a>(&'a self) -> Option<&'a [u8]> {
 		let ptr = unsafe { kkdlib_txp_mipmap_get_data(self.ptr) };
-		if ptr == std::ptr::null() {
+		if ptr.is_null() {
 			return None;
 		}
 		let slice = std::ptr::slice_from_raw_parts(ptr as *const u8, self.size() as usize);
@@ -1079,8 +1069,7 @@ impl Mipmap {
 
 	pub fn rgba(&self) -> Option<Vec<u8>> {
 		let size = self.width() * self.height() * 4;
-		let mut out = Vec::with_capacity(size as usize);
-		out.resize(size as usize, 0u8);
+		let mut out = vec![0; size as usize];
 
 		let data = self.data()?;
 		match self.format() {
@@ -1254,8 +1243,7 @@ impl Mipmap {
 		mip.set_height(height);
 		mip.set_format(format);
 
-		let mut mip_data = Vec::with_capacity(mip.size() as usize);
-		mip_data.resize(mip.size() as usize, 0);
+		let mut mip_data = vec![0; mip.size() as usize];
 
 		match format {
 			Format::A8 => {
@@ -1431,7 +1419,7 @@ impl Mipmap {
 	}
 }
 
-#[cfg(all(feature = "wgpu"))]
+#[cfg(feature = "wgpu")]
 impl Mipmap {
 	pub fn to_rgba_gpu(&self, device: &wgpu::Device, queue: &wgpu::Queue) -> Option<Vec<u8>> {
 		let format = match self.format() {
@@ -1528,7 +1516,7 @@ impl Mipmap {
 		};
 
 		let data = buffer.get_mapped_range(..);
-		let mut out = Vec::with_capacity(self.width() as usize * self.height() as usize * 4);
+		let mut out = vec![0; self.width() as usize * self.height() as usize * 4];
 		out.resize(self.width() as usize * self.height() as usize * 4, 0);
 		for y in 0..(self.height() as usize) {
 			let row =
@@ -1568,8 +1556,7 @@ impl Mipmap {
 
 		let awidth = width - (width % 4);
 		let aheight = height - (height % 4);
-		let mut new_data = Vec::with_capacity(awidth as usize * aheight as usize * 4);
-		new_data.resize(awidth as usize * aheight as usize * 4, 0);
+		let mut new_data = vec![0; awidth as usize * aheight as usize * 4];
 		for y in 0..aheight {
 			new_data[(y as usize * awidth as usize * 4)
 				..(y as usize * awidth as usize * 4 + width as usize * 4)]
@@ -1718,7 +1705,7 @@ impl<'a> MipmapRef<'a> {
 	}
 }
 
-#[cfg(all(feature = "wgpu"))]
+#[cfg(feature = "wgpu")]
 impl MipmapRef<'_> {
 	pub fn to_rgba_gpu(&self, device: &wgpu::Device, queue: &wgpu::Queue) -> Option<Vec<u8>> {
 		Mipmap::to_rgba_gpu(unsafe { std::mem::transmute(self) }, device, queue)
@@ -1741,7 +1728,7 @@ impl<'a> Iterator for MipmapIterator<'a> {
 		}
 
 		let ptr = unsafe { kkdlib_txp_get_mipmap(self.ptr, 0, self.index as i32) };
-		if ptr == std::ptr::null_mut() {
+		if ptr.is_null() {
 			return None;
 		}
 

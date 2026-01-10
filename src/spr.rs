@@ -204,7 +204,7 @@ impl Set {
 			kkdlib_spr_set_pack_file(self.ptr, &mut ptr, &mut size);
 		}
 
-		if ptr == std::ptr::null_mut() || size == 0 {
+		if ptr.is_null() || size == 0 {
 			return None;
 		}
 
@@ -456,10 +456,7 @@ impl<'a> Iterator for InfoIterator<'a> {
 		let sprinfo = unsafe { kkdlib_spr_set_get_sprinfo(self.ptr, self.index) };
 		let sprname = unsafe { kkdlib_spr_set_get_sprname(self.ptr, self.index) };
 		let sprdata = unsafe { kkdlib_spr_set_get_sprdata(self.ptr, self.index) };
-		if sprinfo == std::ptr::null_mut()
-			|| sprname == std::ptr::null()
-			|| sprdata == std::ptr::null_mut()
-		{
+		if sprinfo.is_null() || sprname.is_null() || sprdata.is_null() {
 			return None;
 		}
 
@@ -501,7 +498,7 @@ impl<'a> Iterator for SprTexIterator<'a> {
 			crate::txp::kkdlib_txp_set_get_texture_by_index(txp_set, self.index as usize)
 		};
 		let texname = unsafe { kkdlib_spr_set_get_texname(self.ptr, self.index) };
-		if txp_set == std::ptr::null_mut() || texname == std::ptr::null() {
+		if txp_set.is_null() || texname.is_null() {
 			return None;
 		}
 

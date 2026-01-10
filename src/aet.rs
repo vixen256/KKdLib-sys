@@ -309,7 +309,7 @@ struct SetCounts {
 }
 
 fn count_fcurve(fcurve: &FCurve, count: &mut SetCounts) {
-	if fcurve.keys.len() == 0 || (fcurve.keys.len() == 1 && fcurve.keys[0].value == 0.0) {
+	if fcurve.keys.is_empty() || (fcurve.keys.len() == 1 && fcurve.keys[0].value == 0.0) {
 	} else if fcurve.keys.len() == 1 {
 		count.fcurve_key_count += 1;
 	} else {
@@ -394,7 +394,7 @@ fn alloc_fcurve(in_fcurve: &FCurve, memory: &mut SetMemory) -> aet_fcurve {
 		keys: std::ptr::null(),
 	};
 
-	if in_fcurve.keys.len() == 0 || (in_fcurve.keys.len() == 1 && in_fcurve.keys[0].value == 0.0) {
+	if in_fcurve.keys.is_empty() || (in_fcurve.keys.len() == 1 && in_fcurve.keys[0].value == 0.0) {
 		out.keys_count = 0;
 		return out;
 	}
@@ -435,7 +435,7 @@ fn fcurve_eq(own_fcurve: &FCurve, aet_fcurve: &aet_fcurve) -> bool {
 		return false;
 	}
 
-	if own_fcurve.keys.len() == 0 {
+	if own_fcurve.keys.is_empty() {
 		true
 	} else if own_fcurve.keys.len() == 1 {
 		if unsafe { aet_fcurve.keys.read() } == own_fcurve.keys[0].value {
@@ -476,10 +476,10 @@ fn layer_eq(own_layer: &Layer, aet_layer: &aet_layer) -> bool {
 		|| aet_layer.offset_time != own_layer.offset_time
 		|| aet_layer.time_scale != own_layer.time_scale
 		|| aet_layer.flags != own_layer.flags.into_bits()
-		|| (aet_layer.video == std::ptr::null() && own_layer.video.is_some())
-		|| (aet_layer.audio == std::ptr::null() && own_layer.audio.is_some())
-		|| (aet_layer.video != std::ptr::null() && own_layer.video.is_none())
-		|| (aet_layer.audio != std::ptr::null() && own_layer.audio.is_none())
+		|| (aet_layer.video.is_null() && own_layer.video.is_some())
+		|| (aet_layer.audio.is_null() && own_layer.audio.is_some())
+		|| (!aet_layer.video.is_null() && own_layer.video.is_none())
+		|| (!aet_layer.audio.is_null() && own_layer.audio.is_none())
 	{
 		return false;
 	}
@@ -497,8 +497,8 @@ fn layer_eq(own_layer: &Layer, aet_layer: &aet_layer) -> bool {
 			|| !fcurve_eq(&video.scale_x, &aet_layer_video.scale_x)
 			|| !fcurve_eq(&video.scale_y, &aet_layer_video.scale_y)
 			|| !fcurve_eq(&video.opacity, &aet_layer_video.opacity)
-			|| (video._3d.is_some() && aet_layer_video._3d == std::ptr::null())
-			|| (video._3d.is_none() && aet_layer_video._3d != std::ptr::null())
+			|| (video._3d.is_some() && aet_layer_video._3d.is_null())
+			|| (video._3d.is_none() && !aet_layer_video._3d.is_null())
 		{
 			return false;
 		}
@@ -796,13 +796,13 @@ impl Set {
 		for scene in scenes {
 			let scene = unsafe { &**scene };
 
-			if scene.comp_count == 0 || scene.comp == std::ptr::null() {
+			if scene.comp_count == 0 || scene.comp.is_null() {
 				continue;
 			}
 
 			let root = unsafe { scene.comp.offset(scene.comp_count as isize - 1).read() };
 			let (root, map) = root.decode();
-			for (_, (rc, parent)) in &map {
+			for (rc, parent) in map.values() {
 				let Some(parent) = parent else {
 					continue;
 				};
@@ -811,7 +811,7 @@ impl Set {
 			}
 
 			let name = unsafe { CStr::from_ptr(scene.name) };
-			let camera = if scene.camera != std::ptr::null() {
+			let camera = if !scene.camera.is_null() {
 				let camera = unsafe { scene.camera.read() };
 				Some(Camera {
 					eye_x: camera.eye_x.into(),
@@ -977,7 +977,7 @@ impl Set {
 
 		// Iteration three, set all the parent pointers to proper values rather than rcs
 		for layer in &mut memory.layers {
-			if layer.parent == std::ptr::null() {
+			if layer.parent.is_null() {
 				continue;
 			}
 
@@ -1199,9 +1199,9 @@ impl aet_comp {
 				})
 				.collect::<Vec<_>>();
 
-			let video = if layer.video != std::ptr::null() {
+			let video = if !layer.video.is_null() {
 				let video = unsafe { layer.video.read() };
-				let _3d = if video._3d != std::ptr::null() {
+				let _3d = if !video._3d.is_null() {
 					let _3d = unsafe { video._3d.read() };
 					Some(LayerVideo3D {
 						anchor_z: _3d.anchor_z.into(),
@@ -1237,7 +1237,7 @@ impl aet_comp {
 				None
 			};
 
-			let audio = if layer.audio != std::ptr::null() {
+			let audio = if !layer.audio.is_null() {
 				let audio = unsafe { layer.audio.read() };
 				Some(LayerAudio {
 					volume_l: audio.volume_l.into(),
@@ -1253,7 +1253,7 @@ impl aet_comp {
 				0 => Item::None,
 				1 => {
 					let ptr = layer.item as *const aet_video;
-					if ptr == std::ptr::null() {
+					if ptr.is_null() {
 						Item::None
 					} else {
 						let video = unsafe { ptr.read() };
@@ -1284,7 +1284,7 @@ impl aet_comp {
 				}
 				2 => {
 					let ptr = layer.item as *const aet_audio;
-					if ptr == std::ptr::null() {
+					if ptr.is_null() {
 						Item::None
 					} else {
 						let audio = unsafe { ptr.read() };
@@ -1296,7 +1296,7 @@ impl aet_comp {
 				}
 				3 => {
 					let ptr = layer.item as *const aet_comp;
-					if ptr == std::ptr::null() {
+					if ptr.is_null() {
 						Item::None
 					} else {
 						let comp = unsafe { ptr.read() };
@@ -1327,7 +1327,7 @@ impl aet_comp {
 				unsafe { self.layers.add(i) } as usize,
 				(
 					rc.clone(),
-					if layer.parent == std::ptr::null() {
+					if layer.parent.is_null() {
 						None
 					} else {
 						Some(layer.parent as usize)

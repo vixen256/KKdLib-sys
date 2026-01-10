@@ -44,131 +44,6 @@ mod tests {
 	}
 
 	#[test]
-	fn txp() {
-		let mut set = txp::Set::new();
-
-		let mut pixels = Vec::with_capacity(512 * 512 * 4);
-		pixels.resize(512 * 512 * 4, 0);
-		for y in 0..512 {
-			for x in 0..512 {
-				pixels[(y * 512 + x) * 4 + 0] = (x as f32 / 512.0 * 256.0) as u8;
-				pixels[(y * 512 + x) * 4 + 1] = (y as f32 / 512.0 * 256.0) as u8;
-				pixels[(y * 512 + x) * 4 + 2] =
-					(x as f32 / 512.0 * 126.0) as u8 + (y as f32 / 512.0 * 128.0) as u8;
-				pixels[(y * 512 + x) * 4 + 3] = 255;
-			}
-		}
-
-		let mip = txp::Mipmap::from_rgba(512, 512, &pixels, txp::Format::BC7).unwrap();
-		let mut tex = txp::Texture::new();
-		tex.set_has_cube_map(false);
-		tex.set_array_size(1);
-		tex.set_mipmaps_count(1);
-		tex.add_mipmap(&mip);
-		set.add_file(&tex);
-
-		let mip = txp::Mipmap::from_rgba(512, 512, &pixels, txp::Format::BC6H).unwrap();
-		let mut tex = txp::Texture::new();
-		tex.set_has_cube_map(false);
-		tex.set_array_size(1);
-		tex.set_mipmaps_count(1);
-		tex.add_mipmap(&mip);
-		set.add_file(&tex);
-
-		let mip = txp::Mipmap::from_rgba(512, 512, &pixels, txp::Format::L8).unwrap();
-		let mut tex = txp::Texture::new();
-		tex.set_has_cube_map(false);
-		tex.set_array_size(1);
-		tex.set_mipmaps_count(1);
-		tex.add_mipmap(&mip);
-		set.add_file(&tex);
-
-		let tex = txp::Texture::encode_ycbcr(512, 512, &pixels).unwrap();
-		set.add_file(&tex);
-
-		let data = set.to_buf(false, None).unwrap();
-		std::fs::write("test.txd", data).unwrap();
-	}
-
-	#[test]
-	fn spr() {
-		let mut set = txp::Set::new();
-
-		let mut pixels = Vec::with_capacity(512 * 512 * 4);
-		pixels.resize(512 * 512 * 4, 0);
-		for y in 0..512 {
-			for x in 0..512 {
-				pixels[(y * 512 + x) * 4 + 0] = (x as f32 / 512.0 * 256.0) as u8;
-				pixels[(y * 512 + x) * 4 + 1] = (y as f32 / 512.0 * 256.0) as u8;
-				pixels[(y * 512 + x) * 4 + 2] =
-					(x as f32 / 512.0 * 126.0) as u8 + (y as f32 / 512.0 * 128.0) as u8;
-				pixels[(y * 512 + x) * 4 + 3] = 255;
-			}
-		}
-
-		let mip = txp::Mipmap::from_rgba(512, 512, &pixels, txp::Format::BC7).unwrap();
-		let mut tex = txp::Texture::new();
-		tex.set_has_cube_map(false);
-		tex.set_array_size(1);
-		tex.set_mipmaps_count(1);
-		tex.add_mipmap(&mip);
-		set.add_file(&tex);
-
-		let mip = txp::Mipmap::from_rgba(512, 512, &pixels, txp::Format::BC6H).unwrap();
-		let mut tex = txp::Texture::new();
-		tex.set_has_cube_map(false);
-		tex.set_array_size(1);
-		tex.set_mipmaps_count(1);
-		tex.add_mipmap(&mip);
-		set.add_file(&tex);
-
-		let mip = txp::Mipmap::from_rgba(512, 512, &pixels, txp::Format::L8).unwrap();
-		let mut tex = txp::Texture::new();
-		tex.set_has_cube_map(false);
-		tex.set_array_size(1);
-		tex.set_mipmaps_count(1);
-		tex.add_mipmap(&mip);
-		set.add_file(&tex);
-
-		let tex = txp::Texture::encode_ycbcr(512, 512, &pixels).unwrap();
-		set.add_file(&tex);
-
-		let mut spr_set = spr::Set::new();
-		spr_set.set_txp(
-			&set,
-			vec![
-				String::from("BC7"),
-				String::from("BC6H"),
-				String::from("L8"),
-				String::from("YCbCr"),
-			],
-		);
-
-		let mut spr = spr::Info::new();
-		spr.set_texid(0);
-		spr.set_px(0.0);
-		spr.set_py(0.0);
-		spr.set_width(512.0);
-		spr.set_height(512.0);
-		spr.set_resolution_mode(spr::ResolutionMode::FHD);
-		spr_set.add_spr(&spr, "bc7");
-
-		spr.set_texid(1);
-		spr_set.add_spr(&spr, "bc6h");
-
-		spr.set_texid(2);
-		spr_set.add_spr(&spr, "l8");
-
-		spr.set_texid(3);
-		spr_set.add_spr(&spr, "ycbcr");
-
-		let data = spr_set.to_buf().unwrap();
-		let mut farc = farc::Farc::new();
-		farc.add_file_data("spr_test.bin", &data);
-		farc.write("test.farc", false, false);
-	}
-
-	#[test]
 	fn spr_db() {
 		let data = std::fs::read("/home/vixen/Desktop/mod_spr_db.bin").unwrap();
 		let file = database::sprite::file::Database::from_buf(&data, false);
@@ -190,19 +65,30 @@ mod tests {
 
 	#[test]
 	fn aet() {
-		let data = std::fs::read("/games/SteamLibrary/steamapps/common/Hatsune Miku Project DIVA Mega Mix Plus/mods/PS4 FT UI/rom_steam_en/rom/2d/aet_nswgam_option.bin.bak").unwrap();
+		let data = std::fs::read("/games/SteamLibrary/steamapps/common/Hatsune Miku Project DIVA Mega Mix Plus/mods-testing/Template Mod/rom_steam/rom/2d/aet_gam_cmn.bak.bin").unwrap();
 		let file = aet::Set::from_buf(&data, false);
-		for layer in &file.scenes[0].root.layers {
-			if layer.name != "option_top_menu_display" {
-				continue;
+
+		fn print_audios(comp: &aet::Composition) {
+			for layer in &comp.layers {
+				let layer = layer.try_lock().unwrap();
+				match &layer.item {
+					aet::Item::None => {}
+					aet::Item::Audio(audio) => {
+						dbg!(audio);
+					}
+					aet::Item::Video(_) => {}
+					aet::Item::Composition(comp) => print_audios(comp),
+				}
 			}
-			dbg!(layer);
 		}
+		print_audios(&file.scenes[0].root);
+		/*
 		let data = file.to_buf();
 		dbg!(data.len());
 		std::fs::write(
-			"/games/SteamLibrary/steamapps/common/Hatsune Miku Project DIVA Mega Mix Plus/mods/PS4 FT UI/rom_steam_en/rom/2d/aet_nswgam_option.bin",
+			"/games/SteamLibrary/steamapps/common/Hatsune Miku Project DIVA Mega Mix Plus/mods/PS4 FT UI/rom_steam_en/rom/2d/aet_gam_cmn_new2.bin",
 			&data,
 		);
+		*/
 	}
 }

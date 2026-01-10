@@ -39,13 +39,13 @@ fn main() {
 	let kkdlib_files = files
 		.iter()
 		.map(|file| format!("KKdLib/{file}"))
-		.filter(|file| std::fs::exists(file).map_or(false, |r| r))
+		.filter(|file| std::fs::exists(file).is_ok_and(|r| r))
 		.collect::<Vec<_>>();
 
 	let bridge_files = files
 		.iter()
 		.map(|file| format!("bridge/{file}"))
-		.filter(|file| std::fs::exists(file).map_or(false, |r| r))
+		.filter(|file| std::fs::exists(file).is_ok_and(|r| r))
 		.collect::<Vec<_>>();
 
 	for file in &kkdlib_files {

@@ -200,7 +200,7 @@ impl Farc {
 			);
 		}
 
-		if ptr == std::ptr::null_mut() || size == 0 {
+		if ptr.is_null() || size == 0 {
 			return None;
 		}
 
@@ -230,7 +230,7 @@ impl Farc {
 	pub fn get_file<'a>(&'a self, name: &str) -> Option<FarcFile<'a>> {
 		let c = CString::new(name).ok()?;
 		let ptr = unsafe { kkdlib_farc_get_file_by_name(self.ptr, c.as_ptr()) };
-		if ptr == std::ptr::null_mut() {
+		if ptr.is_null() {
 			None
 		} else {
 			Some(FarcFile {
@@ -243,7 +243,7 @@ impl Farc {
 	pub fn get_file_mut<'a>(&'a mut self, name: &str) -> Option<FarcFileMut<'a>> {
 		let c = CString::new(name).ok()?;
 		let ptr = unsafe { kkdlib_farc_get_file_by_name(self.ptr, c.as_ptr()) };
-		if ptr == std::ptr::null_mut() {
+		if ptr.is_null() {
 			None
 		} else {
 			Some(FarcFileMut {
@@ -296,7 +296,7 @@ impl<'a> FarcFile<'a> {
 
 	pub fn data(&self) -> Option<&'a [u8]> {
 		let ptr = unsafe { kkdlib_farc_file_get_data(self.ptr) };
-		if ptr == std::ptr::null_mut() {
+		if ptr.is_null() {
 			return None;
 		}
 		let slice = std::ptr::slice_from_raw_parts(ptr as *const u8, self.size());
@@ -340,7 +340,7 @@ impl<'a> FarcFileMut<'a> {
 
 	pub fn data(&self) -> Option<&'a [u8]> {
 		let ptr = unsafe { kkdlib_farc_file_get_data(self.ptr) };
-		if ptr == std::ptr::null_mut() {
+		if ptr.is_null() {
 			return None;
 		}
 		let slice = std::ptr::slice_from_raw_parts(ptr as *const u8, self.size());
@@ -383,7 +383,7 @@ impl<'a> Iterator for FarcFileIterator<'a> {
 		}
 
 		let ptr = unsafe { kkdlib_farc_get_file_by_index(self.ptr, self.current_index) };
-		if ptr == std::ptr::null_mut() {
+		if ptr.is_null() {
 			return None;
 		}
 

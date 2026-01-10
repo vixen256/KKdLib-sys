@@ -120,7 +120,7 @@ pub mod file {
 			}
 
 			let entry = unsafe { kkdlib_spr_db_spr_set_file_get_sprite(self.ptr, self.index) };
-			if entry == std::ptr::null_mut() {
+			if entry.is_null() {
 				return None;
 			}
 
@@ -132,7 +132,7 @@ pub mod file {
 		}
 
 		fn size_hint(&self) -> (usize, Option<usize>) {
-			(self.len as usize, Some(self.len as usize))
+			(self.len, Some(self.len))
 		}
 	}
 
@@ -260,7 +260,7 @@ pub mod file {
 			}
 
 			let set = unsafe { kkdlib_sprite_database_file_get_sprite_set(self.ptr, self.index) };
-			if set == std::ptr::null_mut() {
+			if set.is_null() {
 				return None;
 			}
 
@@ -272,7 +272,7 @@ pub mod file {
 		}
 
 		fn size_hint(&self) -> (usize, Option<usize>) {
-			(self.len as usize, Some(self.len as usize))
+			(self.len, Some(self.len))
 		}
 	}
 
@@ -359,7 +359,7 @@ pub mod file {
 				kkdlib_sprite_database_file_write_data(self.ptr, &mut ptr, &mut size);
 			}
 
-			if ptr == std::ptr::null_mut() || size == 0 {
+			if ptr.is_null() || size == 0 {
 				return None;
 			}
 
@@ -532,7 +532,7 @@ impl<'a> Database {
 	pub fn get_spr_set_by_name(&'a self, name: &str) -> Option<SetRef<'a>> {
 		let cstring = CString::new(name).ok()?;
 		let ptr = unsafe { kkdlib_sprite_database_get_spr_set_by_name(self.ptr, cstring.as_ptr()) };
-		if ptr == std::ptr::null() || unsafe { kkdlib_spr_db_spr_set_get_id(ptr) } == u32::MAX {
+		if ptr.is_null() || unsafe { kkdlib_spr_db_spr_set_get_id(ptr) } == u32::MAX {
 			None
 		} else {
 			Some(SetRef {
@@ -544,7 +544,7 @@ impl<'a> Database {
 
 	pub fn get_spr_set_by_id(&'a self, id: u32) -> Option<SetRef<'a>> {
 		let ptr = unsafe { kkdlib_sprite_database_get_spr_set_by_id(self.ptr, id) };
-		if ptr == std::ptr::null() || unsafe { kkdlib_spr_db_spr_set_get_id(ptr) } == u32::MAX {
+		if ptr.is_null() || unsafe { kkdlib_spr_db_spr_set_get_id(ptr) } == u32::MAX {
 			None
 		} else {
 			Some(SetRef {
@@ -556,7 +556,7 @@ impl<'a> Database {
 
 	pub fn get_spr_set_by_index(&'a self, index: u32) -> Option<SetRef<'a>> {
 		let ptr = unsafe { kkdlib_sprite_database_get_spr_set_by_index(self.ptr, index) };
-		if ptr == std::ptr::null() || unsafe { kkdlib_spr_db_spr_set_get_id(ptr) } == u32::MAX {
+		if ptr.is_null() || unsafe { kkdlib_spr_db_spr_set_get_id(ptr) } == u32::MAX {
 			None
 		} else {
 			Some(SetRef {
@@ -569,7 +569,7 @@ impl<'a> Database {
 	pub fn get_spr_by_name(&'a self, name: &str) -> Option<EntryRef<'a>> {
 		let cstring = CString::new(name).ok()?;
 		let ptr = unsafe { kkdlib_sprite_database_get_spr_by_name(self.ptr, cstring.as_ptr()) };
-		if ptr == std::ptr::null() || unsafe { kkdlib_spr_db_spr_get_id(ptr) } == u32::MAX {
+		if ptr.is_null() || unsafe { kkdlib_spr_db_spr_get_id(ptr) } == u32::MAX {
 			None
 		} else {
 			Some(EntryRef {
@@ -581,7 +581,7 @@ impl<'a> Database {
 
 	pub fn get_spr_by_id(&'a self, id: u32) -> Option<EntryRef<'a>> {
 		let ptr = unsafe { kkdlib_sprite_database_get_spr_by_id(self.ptr, id) };
-		if ptr == std::ptr::null() || unsafe { kkdlib_spr_db_spr_get_id(ptr) } == u32::MAX {
+		if ptr.is_null() || unsafe { kkdlib_spr_db_spr_get_id(ptr) } == u32::MAX {
 			None
 		} else {
 			Some(EntryRef {

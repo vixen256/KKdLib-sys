@@ -1,4 +1,4 @@
-#![feature(cfg_eval, push_mut)]
+#![feature(cfg_eval, push_mut, array_windows)]
 
 // Without mentioning the crate it will not get linked
 extern crate libdeflate_sys;

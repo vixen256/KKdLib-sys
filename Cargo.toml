@@ -30,5 +30,4 @@ wgpu = ["dep:block_compression", "dep:image", "dep:wgpu"]
 
 [profile.release]
 codegen-units = 1
-lto = true
 strip = true

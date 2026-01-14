@@ -271,7 +271,7 @@ impl PartialEq for Composition {
 		self.layers
 			.iter()
 			.zip(other.layers.iter())
-			.all(|(a, b)| *a.lock().unwrap() == *b.lock().unwrap())
+			.all(|(a, b)| *a.lock() == *b.lock())
 	}
 }
 
@@ -325,7 +325,7 @@ fn count_fcurve(fcurve: &FCurve, count: &mut SetCounts) {
 fn count_comp(comp: &Composition, count: &mut SetCounts) {
 	count.comp_count += 1;
 	for layer in &comp.layers {
-		let layer = layer.lock().unwrap();
+		let layer = layer.lock();
 		count.layer_count += 1;
 		count.name_count += 1;
 		count.marker_count += layer.markers.len();
@@ -631,7 +631,7 @@ fn alloc_item(
 				}
 				for j in 0..comp.layers.len() {
 					let layer = unsafe { &*memory.comps[i].layers.offset(j as isize) };
-					if !layer_eq(&comp.layers[j].lock().unwrap(), layer) {
+					if !layer_eq(&comp.layers[j].lock(), layer) {
 						continue 'outer;
 					}
 				}
@@ -675,7 +675,7 @@ fn alloc_comp(
 	let mut aet_layers = Vec::new();
 
 	for in_layer in &in_comp.layers {
-		let layer = in_layer.lock().unwrap();
+		let layer = in_layer.lock();
 		let name = CString::new(layer.name.clone()).unwrap_or_default();
 		let name = memory.names.push_mut(name).as_ptr();
 
@@ -773,7 +773,7 @@ fn alloc_comp(
 	}
 
 	for (layer, aet_layer) in in_comp.layers.iter().zip(aet_layers.into_iter()) {
-		let layer = layer.lock().unwrap();
+		let layer = layer.lock();
 		let (item_type, item) = alloc_item(&layer.item, out_scene, memory);
 		let aet_layer = unsafe { &mut *aet_layer };
 		aet_layer.item_type = item_type;
@@ -812,7 +812,7 @@ impl Set {
 					continue;
 				};
 
-				rc.lock().unwrap().parent = map.get(parent).map(|(rc, _)| rc).cloned();
+				rc.lock().parent = map.get(parent).map(|(rc, _)| rc).cloned();
 			}
 
 			let name = unsafe { CStr::from_ptr(scene.name) };

@@ -18,7 +18,7 @@ fn main() {
 		"aet.cpp",
 		"default.cpp",
 		"deflate.cpp",
-		// "divafile.cpp",
+		"divafile.cpp",
 		"farc.cpp",
 		"half_t.cpp",
 		"hash.cpp",

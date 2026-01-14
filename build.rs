@@ -2,7 +2,7 @@ fn main() {
 	let xxhash_files = ["xxHash/xxhash.c"];
 
 	let files = [
-		"database/aet.cpp",
+		// "database/aet.cpp",
 		"database/sprite.cpp",
 		"f2/enrs.cpp",
 		"f2/header.cpp",
@@ -18,20 +18,20 @@ fn main() {
 		"aet.cpp",
 		"default.cpp",
 		"deflate.cpp",
-		"divafile.cpp",
+		// "divafile.cpp",
 		"farc.cpp",
 		"half_t.cpp",
 		"hash.cpp",
 		"image.cpp",
 		"interpolation.cpp",
-		"key_val.cpp",
-		"kf.cpp",
+		// "key_val.cpp",
+		// "kf.cpp",
 		"mat.cpp",
 		"quat.cpp",
 		"sort.cpp",
 		"spr.cpp",
 		"str_utils.cpp",
-		"time.cpp",
+		// "time.cpp",
 		"txp.cpp",
 		"vec.cpp",
 	];

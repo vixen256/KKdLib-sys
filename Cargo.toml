@@ -10,8 +10,7 @@ crate-type = ["lib", "cdylib"]
 [dependencies]
 bitfields = "1.0"
 bitflags = "2.10"
-block_compression = { version = "0.7", optional = true }
-directxtex = { version = "1.3", optional = true }
+block_compression = { version = "0.7", default-features = false, optional = true, features = ["bc15", "bc7", "wgpu"] }
 image = { version = "0.25", default-features = false, optional = true }
 libdeflate-sys = "1.25"
 pollster = { version = "0.4", optional = true }
@@ -24,7 +23,7 @@ libdeflate-sys = "1.25"
 
 [features]
 default = ["wgpu"]
-directxtex = ["dep:directxtex"]
+bc6h = ["block_compression/bc6h", "wgpu"]
 pyo3 = ["dep:pollster", "dep:pyo3"]
 wgpu = ["dep:block_compression", "dep:image", "dep:wgpu"]
 

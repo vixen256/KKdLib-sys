@@ -1,9 +1,6 @@
 use std::ffi::*;
 use std::marker::PhantomData;
 
-#[cfg(feature = "directxtex")]
-use directxtex::*;
-
 #[cfg(feature = "wgpu")]
 use wgpu::util::DeviceExt;
 
@@ -82,6 +79,7 @@ pub enum Format {
 	L8A8 = 13,
 	// MM+
 	BC7 = 15,
+	#[cfg(feature = "bc6h")]
 	BC6H = 127,
 }
 
@@ -365,18 +363,7 @@ impl Texture {
 	}
 }
 
-#[cfg(not(any(feature = "directxtex", feature = "wgpu")))]
-impl Texture {
-	pub fn decode_ycbcr(&self) -> Option<Vec<u8>> {
-		None
-	}
-
-	pub fn encode_ycbcr(width: i32, height: i32, data: &[u8]) -> Option<Self> {
-		None
-	}
-}
-
-#[cfg(all(feature = "wgpu", not(feature = "directxtex")))]
+#[cfg(feature = "wgpu")]
 impl Texture {
 	pub fn decode_ycbcr(&self) -> Option<Vec<u8>> {
 		if !self.is_ycbcr() {
@@ -634,275 +621,6 @@ impl Texture {
 	}
 }
 
-#[cfg(feature = "directxtex")]
-impl Texture {
-	pub fn decode_ycbcr(&self) -> Option<Vec<u8>> {
-		if !self.is_ycbcr() {
-			return None;
-		}
-
-		let y_mip = self.get_mipmap(0, 0)?;
-		let y_data = y_mip.data()?;
-		let cbcr_mip = self.get_mipmap(0, 1)?;
-		let cbcr_data = cbcr_mip.data()?;
-
-		let mut y_scratch = ScratchImage::default();
-		let mut cbcr_scratch = ScratchImage::default();
-		y_scratch
-			.initialize_2d(
-				DXGI_FORMAT_BC5_UNORM,
-				y_mip.width() as usize,
-				y_mip.height() as usize,
-				1,
-				1,
-				CP_FLAGS_NONE,
-			)
-			.ok()?;
-		y_scratch.pixels_mut().copy_from_slice(y_data);
-		cbcr_scratch
-			.initialize_2d(
-				DXGI_FORMAT_BC5_UNORM,
-				y_mip.width() as usize / 2,
-				y_mip.height() as usize / 2,
-				1,
-				1,
-				CP_FLAGS_NONE,
-			)
-			.ok()?;
-		cbcr_scratch.pixels_mut().copy_from_slice(cbcr_data);
-
-		let luma = y_scratch.decompress(DXGI_FORMAT_R32G32_FLOAT).ok()?;
-		let chroma = cbcr_scratch.decompress(DXGI_FORMAT_R32G32_FLOAT).ok()?;
-		let chroma = chroma
-			.resize(
-				y_mip.width() as usize,
-				y_mip.height() as usize,
-				TEX_FILTER_CUBIC,
-			)
-			.ok()?;
-
-		let luma = luma.pixels().as_ptr() as *const f32;
-		let luma = std::ptr::slice_from_raw_parts(
-			luma,
-			y_mip.width() as usize * y_mip.height() as usize * 2,
-		);
-		let luma = unsafe { luma.as_ref()? };
-
-		let chroma = chroma.pixels().as_ptr() as *const f32;
-		let chroma = std::ptr::slice_from_raw_parts(
-			chroma,
-			y_mip.width() as usize * y_mip.height() as usize * 2,
-		);
-		let chroma = unsafe { chroma.as_ref()? };
-
-		let mut out = vec![0; y_mip.width() as usize * y_mip.height() as usize * 4];
-		for i in 0..(y_mip.height() as usize * y_mip.width() as usize) {
-			let y = luma[i * 2 + 0];
-			let a = luma[i * 2 + 1];
-			let cb = chroma[i * 2 + 0] * ycbcr::CBCR_MUL - ycbcr::CBCR_SUB;
-			let cr = chroma[i * 2 + 1] * ycbcr::CBCR_MUL - ycbcr::CBCR_SUB;
-
-			let r = y * ycbcr::DECODE[0][0] + cb * ycbcr::DECODE[0][1] + cr * ycbcr::DECODE[0][2];
-			let g = y * ycbcr::DECODE[1][0] + cb * ycbcr::DECODE[1][1] + cr * ycbcr::DECODE[1][2];
-			let b = y * ycbcr::DECODE[2][0] + cb * ycbcr::DECODE[2][1] + cr * ycbcr::DECODE[2][2];
-
-			out[i * 4 + 0] = (r * 255.0) as u8;
-			out[i * 4 + 1] = (g * 255.0) as u8;
-			out[i * 4 + 2] = (b * 255.0) as u8;
-			out[i * 4 + 3] = (a * 255.0) as u8;
-		}
-
-		Some(out)
-	}
-
-	pub fn encode_ycbcr(width: i32, height: i32, data: &[u8]) -> Option<Self> {
-		let mut y_scratch = ScratchImage::default();
-		y_scratch
-			.initialize_2d(
-				DXGI_FORMAT_R32G32_FLOAT,
-				width as usize,
-				height as usize,
-				1,
-				1,
-				CP_FLAGS_NONE,
-			)
-			.ok()?;
-
-		let mut cbcr_scratch = ScratchImage::default();
-		cbcr_scratch
-			.initialize_2d(
-				DXGI_FORMAT_R32G32_FLOAT,
-				width as usize,
-				height as usize,
-				1,
-				1,
-				CP_FLAGS_NONE,
-			)
-			.ok()?;
-
-		let luma = y_scratch.pixels_mut().as_mut_ptr() as *mut f32;
-		let luma = std::ptr::slice_from_raw_parts_mut(luma, width as usize * height as usize * 2);
-
-		let chroma = cbcr_scratch.pixels_mut().as_mut_ptr() as *mut f32;
-		let chroma =
-			std::ptr::slice_from_raw_parts_mut(chroma, width as usize * height as usize * 2);
-
-		for i in 0..(height as usize * width as usize) {
-			let r = data[i * 4 + 0] as f32 / 255.0;
-			let g = data[i * 4 + 1] as f32 / 255.0;
-			let b = data[i * 4 + 2] as f32 / 255.0;
-			let a = data[i * 4 + 3] as f32 / 255.0;
-
-			let y = r * ycbcr::ENCODE[0][0] + g * ycbcr::ENCODE[0][1] + b * ycbcr::ENCODE[0][2];
-			let cb = r * ycbcr::ENCODE[1][0]
-				+ g * ycbcr::ENCODE[1][1]
-				+ b * ycbcr::ENCODE[1][2]
-				+ ycbcr::CBCR_SUB;
-			let cr = r * ycbcr::ENCODE[2][0]
-				+ g * ycbcr::ENCODE[2][1]
-				+ b * ycbcr::ENCODE[2][2]
-				+ ycbcr::CBCR_SUB;
-
-			unsafe {
-				(*luma)[i * 2 + 0] = y;
-				(*luma)[i * 2 + 1] = a;
-				(*chroma)[i * 2 + 0] = cb / ycbcr::CBCR_MUL;
-				(*chroma)[i * 2 + 1] = cr / ycbcr::CBCR_MUL;
-			}
-		}
-
-		let y_scratch = y_scratch
-			.compress(
-				DXGI_FORMAT_BC5_UNORM,
-				TEX_COMPRESS_DITHER,
-				TEX_THRESHOLD_DEFAULT,
-			)
-			.ok()?;
-
-		let cbcr_scratch = cbcr_scratch
-			.resize(width as usize / 2, height as usize / 2, TEX_FILTER_CUBIC)
-			.ok()?;
-		let cbcr_scratch = cbcr_scratch
-			.compress(
-				DXGI_FORMAT_BC5_UNORM,
-				TEX_COMPRESS_DITHER,
-				TEX_THRESHOLD_DEFAULT,
-			)
-			.ok()?;
-
-		let mut texture = Self::new();
-		texture.set_has_cube_map(false);
-		texture.set_array_size(1);
-		texture.set_mipmaps_count(2);
-
-		let mut y_mip = Mipmap::new();
-		y_mip.set_width(width);
-		y_mip.set_height(height);
-		y_mip.set_format(Format::BC5);
-		y_mip.set_data(y_scratch.pixels());
-		texture.add_mipmap(&y_mip);
-
-		let mut cbcr_mip = Mipmap::new();
-		cbcr_mip.set_width(width / 2);
-		cbcr_mip.set_height(height / 2);
-		cbcr_mip.set_format(Format::BC5);
-		cbcr_mip.set_data(cbcr_scratch.pixels());
-		texture.add_mipmap(&cbcr_mip);
-
-		Some(texture)
-	}
-
-	pub fn scratch_image(&self) -> Option<ScratchImage> {
-		let mut scratch = ScratchImage::default();
-		let first_mip = self.get_mipmap(0, 0)?;
-		if self.is_ycbcr() {
-			scratch
-				.initialize_2d(
-					DXGI_FORMAT_R8G8B8A8_UNORM,
-					first_mip.width() as usize,
-					first_mip.height() as usize,
-					1,
-					1,
-					CP_FLAGS_NONE,
-				)
-				.ok()?;
-		}
-
-		if self.has_cube_map() {
-			scratch
-				.initialize_cube(
-					DXGI_FORMAT_R8G8B8A8_UNORM,
-					first_mip.width() as usize,
-					first_mip.height() as usize,
-					self.array_size() as usize,
-					self.mipmaps_count() as usize,
-					CP_FLAGS_NONE,
-				)
-				.ok()?;
-		} else if self.is_ycbcr() {
-			scratch
-				.initialize_2d(
-					DXGI_FORMAT_R8G8B8A8_UNORM,
-					first_mip.width() as usize,
-					first_mip.height() as usize,
-					1,
-					1,
-					CP_FLAGS_NONE,
-				)
-				.ok()?;
-
-			let rgba = self.decode_ycbcr()?;
-			scratch.pixels_mut().copy_from_slice(&rgba);
-			return Some(scratch);
-		} else {
-			scratch
-				.initialize_2d(
-					DXGI_FORMAT_R8G8B8A8_UNORM,
-					first_mip.width() as usize,
-					first_mip.height() as usize,
-					self.array_size() as usize,
-					self.mipmaps_count() as usize,
-					CP_FLAGS_NONE,
-				)
-				.ok()?;
-		}
-
-		let mut offset = 0usize;
-		let pixels = scratch.pixels_mut();
-		for mip in self.mipmaps() {
-			let Some(rgba) = mip.rgba() else {
-				continue;
-			};
-
-			pixels[offset..(offset + rgba.len())].copy_from_slice(&rgba);
-			offset += rgba.len();
-		}
-
-		Some(scratch)
-	}
-
-	pub fn from_scratch_image(scratch: &ScratchImage, format: Format) -> Option<Self> {
-		if scratch.metadata().format != DXGI_FORMAT_R8G8B8A8_UNORM {
-			return None;
-		}
-
-		let mut texture = Self::new();
-		texture.set_has_cube_map(scratch.metadata().is_cubemap());
-		texture.set_array_size(scratch.metadata().array_size as i32);
-		texture.set_mipmaps_count(scratch.metadata().mip_levels as i32);
-
-		for image in scratch.images() {
-			let data = std::ptr::slice_from_raw_parts(image.pixels, image.slice_pitch);
-			let data = unsafe { data.as_ref()? };
-
-			let mip = Mipmap::from_rgba(image.width as i32, image.height as i32, data, format)?;
-			texture.add_mipmap(&mip);
-		}
-
-		Some(texture)
-	}
-}
-
 impl Drop for Texture {
 	fn drop(&mut self) {
 		unsafe { kkdlib_txp_delete(self.ptr) };
@@ -952,16 +670,6 @@ impl<'a> TextureRef<'a> {
 
 	pub fn mipmaps(&'a self) -> MipmapIterator<'a> {
 		Texture::mipmaps(unsafe { std::mem::transmute(self) })
-	}
-
-	#[cfg(feature = "directxtex")]
-	pub fn scratch_image(&self) -> Option<ScratchImage> {
-		Texture::scratch_image(unsafe { std::mem::transmute(self) })
-	}
-
-	#[cfg(feature = "directxtex")]
-	pub fn decode_ycbcr(&self) -> Option<Vec<u8>> {
-		Texture::decode_ycbcr(unsafe { std::mem::transmute(self) })
 	}
 }
 
@@ -1142,9 +850,8 @@ impl Mipmap {
 			| Format::BC3
 			| Format::BC4
 			| Format::BC5
-			| Format::BC7
-			| Format::BC6H => {
-				#[cfg(all(feature = "wgpu", not(feature = "directxtex")))]
+			| Format::BC7 => {
+				#[cfg(feature = "wgpu")]
 				{
 					let fmt = match self.format() {
 						Format::BC1 | Format::BC1a => block_compression::CompressionVariant::BC1,
@@ -1154,9 +861,6 @@ impl Mipmap {
 						Format::BC5 => block_compression::CompressionVariant::BC5,
 						Format::BC7 => block_compression::CompressionVariant::BC7(
 							block_compression::BC7Settings::alpha_slow(),
-						),
-						Format::BC6H => block_compression::CompressionVariant::BC6H(
-							block_compression::BC6HSettings::very_slow(),
 						),
 						_ => unreachable!(),
 					};
@@ -1175,42 +879,24 @@ impl Mipmap {
 						}
 					}
 				}
-				#[cfg(feature = "directxtex")]
+				#[cfg(not(feature = "wgpu"))]
+				return None;
+			}
+			#[cfg(feature = "bc6h")]
+			Format::BC6H => {
+				#[cfg(feature = "wgpu")]
 				{
-					let mut scratch = ScratchImage::default();
-					let fmt = match self.format() {
-						Format::BC1 | Format::BC1a => DXGI_FORMAT_BC1_UNORM,
-						Format::BC2 => DXGI_FORMAT_BC2_UNORM,
-						Format::BC3 => DXGI_FORMAT_BC3_UNORM,
-						Format::BC4 => DXGI_FORMAT_BC4_UNORM,
-						Format::BC5 => DXGI_FORMAT_BC5_UNORM,
-						Format::BC7 => DXGI_FORMAT_BC7_UNORM,
-						Format::BC6H => DXGI_FORMAT_BC6H_UF16,
-						_ => unreachable!(),
-					};
-					scratch
-						.initialize_2d(
-							fmt,
-							self.width() as usize,
-							self.height() as usize,
-							1,
-							1,
-							CP_FLAGS_NONE,
-						)
-						.ok()?;
-					scratch.pixels_mut().copy_from_slice(data);
-
-					let scratch = scratch.decompress(DXGI_FORMAT_R8G8B8A8_UNORM).ok()?;
-					out.copy_from_slice(scratch.pixels());
-
-					// Anti piss filter
-					if self.format() == Format::BC5 {
-						for i in 0..(size as usize / 4) {
-							out[i * 4 + 2] = 0xFF;
-						}
-					}
+					block_compression::decode::decompress_blocks_as_rgba8(
+						block_compression::CompressionVariant::BC6H(
+							block_compression::BC6HSettings::very_slow(),
+						),
+						self.width() as u32,
+						self.height() as u32,
+						data,
+						&mut out,
+					);
 				}
-				#[cfg(all(not(feature = "directxtex"), not(feature = "wgpu")))]
+				#[cfg(not(feature = "wgpu"))]
 				return None;
 			}
 			Format::L8 => {
@@ -1313,9 +999,8 @@ impl Mipmap {
 			| Format::BC3
 			| Format::BC4
 			| Format::BC5
-			| Format::BC7
-			| Format::BC6H => {
-				#[cfg(all(feature = "wgpu", not(feature = "directxtex")))]
+			| Format::BC7 => {
+				#[cfg(feature = "wgpu")]
 				{
 					let fmt = match format {
 						Format::BC1 | Format::BC1a => block_compression::CompressionVariant::BC1,
@@ -1325,9 +1010,6 @@ impl Mipmap {
 						Format::BC5 => block_compression::CompressionVariant::BC5,
 						Format::BC7 => block_compression::CompressionVariant::BC7(
 							block_compression::BC7Settings::alpha_slow(),
-						),
-						Format::BC6H => block_compression::CompressionVariant::BC6H(
-							block_compression::BC6HSettings::very_slow(),
 						),
 						_ => unreachable!(),
 					};
@@ -1341,41 +1023,25 @@ impl Mipmap {
 						width as u32 * 4,
 					);
 				}
-				#[cfg(feature = "directxtex")]
+				#[cfg(not(feature = "wgpu"))]
+				return None;
+			}
+			#[cfg(feature = "bc6h")]
+			Format::BC6H => {
+				#[cfg(feature = "wgpu")]
 				{
-					let mut scratch = ScratchImage::default();
-					scratch
-						.initialize_2d(
-							DXGI_FORMAT_R8G8B8A8_UNORM,
-							width as usize,
-							height as usize,
-							1,
-							1,
-							CP_FLAGS_NONE,
-						)
-						.ok()?;
-					scratch.pixels_mut().copy_from_slice(data);
-
-					let compressed = scratch
-						.compress(
-							match format {
-								Format::BC1 | Format::BC1a => DXGI_FORMAT_BC1_UNORM,
-								Format::BC2 => DXGI_FORMAT_BC2_UNORM,
-								Format::BC3 => DXGI_FORMAT_BC3_UNORM,
-								Format::BC4 => DXGI_FORMAT_BC4_UNORM,
-								Format::BC5 => DXGI_FORMAT_BC5_UNORM,
-								Format::BC7 => DXGI_FORMAT_BC7_UNORM,
-								Format::BC6H => DXGI_FORMAT_BC6H_UF16,
-								_ => unreachable!(),
-							},
-							TEX_COMPRESS_DITHER,
-							TEX_THRESHOLD_DEFAULT,
-						)
-						.unwrap();
-
-					mip_data.copy_from_slice(compressed.pixels());
+					block_compression::encode::compress_rgba8(
+						block_compression::CompressionVariant::BC6H(
+							block_compression::BC6HSettings::very_slow(),
+						),
+						data,
+						&mut mip_data,
+						width as u32,
+						height as u32,
+						width as u32 * 4,
+					);
 				}
-				#[cfg(all(not(feature = "directxtex"), not(feature = "wgpu")))]
+				#[cfg(not(feature = "wgpu"))]
 				return None;
 			}
 			Format::L8 => {
@@ -1429,6 +1095,7 @@ impl Mipmap {
 			Format::BC4 => wgpu::TextureFormat::Bc4RSnorm,
 			Format::BC5 => wgpu::TextureFormat::Bc5RgUnorm,
 			Format::BC7 => wgpu::TextureFormat::Bc7RgbaUnorm,
+			#[cfg(feature = "bc6h")]
 			Format::BC6H => wgpu::TextureFormat::Bc6hRgbUfloat,
 			_ => return self.rgba(),
 		};
@@ -1548,6 +1215,7 @@ impl Mipmap {
 			Format::BC7 => block_compression::CompressionVariant::BC7(
 				block_compression::BC7Settings::alpha_slow(),
 			),
+			#[cfg(feature = "bc6h")]
 			Format::BC6H => block_compression::CompressionVariant::BC6H(
 				block_compression::BC6HSettings::very_slow(),
 			),

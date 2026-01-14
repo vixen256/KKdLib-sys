@@ -449,6 +449,7 @@ dependencies = [
  "cc",
  "image",
  "libdeflate-sys",
+ "parking_lot",
  "pollster",
  "pyo3",
  "wgpu",

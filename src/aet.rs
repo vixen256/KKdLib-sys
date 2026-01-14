@@ -1,7 +1,12 @@
 use std::collections::*;
 use std::ffi::*;
 use std::rc::*;
+
+#[cfg(not(feature = "parking_lot"))]
 use std::sync::*;
+
+#[cfg(feature = "parking_lot")]
+use parking_lot::*;
 
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

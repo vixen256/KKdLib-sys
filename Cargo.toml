@@ -13,6 +13,7 @@ bitflags = "2.10"
 block_compression = { version = "0.7", default-features = false, optional = true, features = ["bc15", "bc7", "wgpu"] }
 image = { version = "0.25", default-features = false, optional = true }
 libdeflate-sys = "1.25"
+parking_lot = { version = "0.12", optional = true }
 pollster = { version = "0.4", optional = true }
 pyo3 = { version = "0.27", features = ["abi3-py39", "extension-module", "generate-import-lib"], optional = true }
 wgpu = { version = "27.0", default-features = false, optional = true, features = ["gles", "metal", "parking_lot", "std", "vulkan"] }
@@ -22,8 +23,9 @@ cc = "1.2"
 libdeflate-sys = "1.25"
 
 [features]
-default = ["wgpu"]
+default = ["parking_lot", "wgpu"]
 bc6h = ["block_compression/bc6h", "wgpu"]
+parking_lot = ["dep:parking_lot"]
 pyo3 = ["dep:pollster", "dep:pyo3"]
 wgpu = ["dep:block_compression", "dep:image", "dep:wgpu"]
 

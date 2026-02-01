@@ -4,3 +4,6 @@
 [submodule "xxHash"]
 	path = xxHash
 	url = https://github.com/Cyan4973/xxHash
+[submodule "bc7enc_rdo"]
+	path = bc7enc_rdo
+	url = https://github.com/richgel999/bc7enc_rdo

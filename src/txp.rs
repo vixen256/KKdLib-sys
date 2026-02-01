@@ -1,9 +1,6 @@
 use std::ffi::*;
 use std::marker::PhantomData;
 
-#[cfg(feature = "wgpu")]
-use wgpu::util::DeviceExt;
-
 #[cfg(feature = "pyo3")]
 use pyo3::prelude::*;
 
@@ -22,41 +19,6 @@ pub(crate) mod txp_module {
 	use super::Set;
 	#[pymodule_export]
 	use super::Texture;
-
-	#[cfg(feature = "wgpu")]
-	#[pyfunction]
-	fn init_wgpu() {
-		std::thread::spawn(|| super::WGPU_RESOURCES.set(super::init_wgpu()));
-	}
-}
-
-#[cfg(all(feature = "pyo3", feature = "wgpu"))]
-static WGPU_RESOURCES: std::sync::OnceLock<(wgpu::Device, wgpu::Queue)> =
-	std::sync::OnceLock::new();
-
-#[cfg(all(feature = "pyo3", feature = "wgpu"))]
-fn init_wgpu() -> (wgpu::Device, wgpu::Queue) {
-	let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
-		backends: wgpu::Backends::all(),
-		flags: wgpu::InstanceFlags::from_build_config(),
-		memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
-		backend_options: wgpu::BackendOptions::default(),
-	});
-
-	let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-		power_preference: wgpu::PowerPreference::HighPerformance,
-		force_fallback_adapter: false,
-		compatible_surface: None,
-	}))
-	.unwrap();
-
-	pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-		label: None,
-		required_features: wgpu::Features::TEXTURE_COMPRESSION_BC,
-		memory_hints: wgpu::MemoryHints::MemoryUsage,
-		..Default::default()
-	}))
-	.unwrap()
 }
 
 #[repr(u32)]
@@ -79,7 +41,6 @@ pub enum Format {
 	L8A8 = 13,
 	// MM+
 	BC7 = 15,
-	#[cfg(feature = "bc6h")]
 	BC6H = 127,
 }
 
@@ -320,51 +281,6 @@ impl Texture {
 			&& self.get_mipmap(0, 1).unwrap().format() == Format::BC5
 	}
 
-	#[cfg(all(feature = "pyo3", feature = "wgpu"))]
-	#[cfg_attr(feature = "pyo3", staticmethod)]
-	pub fn py_from_rgba_gpu(width: i32, height: i32, data: &[u8], format: Format) -> Option<Self> {
-		let (device, queue) = WGPU_RESOURCES.get_or_init(init_wgpu);
-		let mip = Mipmap::from_rgba_gpu(width, height, data, format, device, queue)?;
-		let mut tex = Self::new();
-		tex.set_has_cube_map(false);
-		tex.set_array_size(1);
-		tex.set_mipmaps_count(1);
-		tex.add_mipmap(&mip);
-		Some(tex)
-	}
-
-	#[cfg(all(feature = "pyo3", feature = "wgpu"))]
-	#[cfg_attr(feature = "pyo3", staticmethod)]
-	pub fn py_ycbcr_from_rgba_gpu(width: u32, height: u32, data: &[u8]) -> Option<Self> {
-		let (device, queue) = WGPU_RESOURCES.get_or_init(init_wgpu);
-		Self::encode_ycbcr(width, height, data, device, queue)
-	}
-}
-
-impl Texture {
-	pub fn get_mipmap<'a>(&'a self, array_index: i32, mipmap_index: i32) -> Option<MipmapRef<'a>> {
-		let ptr = unsafe { kkdlib_txp_get_mipmap(self.ptr, array_index, mipmap_index) };
-		if ptr.is_null() {
-			return None;
-		}
-		Some(MipmapRef {
-			_ptr: ptr,
-			phantom: PhantomData,
-		})
-	}
-
-	pub fn mipmaps<'a>(&'a self) -> MipmapIterator<'a> {
-		MipmapIterator {
-			ptr: self.ptr,
-			index: 0,
-			len: (self.array_size() * self.mipmaps_count()) as usize,
-			phantom: PhantomData,
-		}
-	}
-}
-
-#[cfg(feature = "wgpu")]
-impl Texture {
 	pub fn decode_ycbcr(&self) -> Option<Vec<u8>> {
 		if !self.is_ycbcr() {
 			return None;
@@ -378,38 +294,36 @@ impl Texture {
 		let mut ya_out = vec![0; ya_mip.width() as usize * ya_mip.height() as usize * 2];
 		let mut cbcr_out = vec![0; cbcr_mip.width() as usize * cbcr_mip.height() as usize * 2];
 
-		let pitch = ya_mip.width() as usize * 2;
-		let w = ya_mip.width() as usize / 4;
-		let h = ya_mip.height() as usize / 4;
-		for y in 0..h {
-			for x in 0..w {
-				let block_start = (y * w + x) * 16;
-
-				let x_offset = x * 4 * 2;
-				let y_offset = y * 4 * pitch;
-				block_compression::decode::decode_block_bc5(
-					&ya_data[block_start..],
-					&mut ya_out[(y_offset + x_offset)..],
-					pitch,
-				);
+		unsafe {
+			let ptr = rdo_decode_rg(
+				ya_data.as_ptr(),
+				ya_mip.width() as u32,
+				ya_mip.height() as u32,
+				DXGI_FORMAT_BC5_UNORM,
+			);
+			if ptr.is_null() {
+				return None;
 			}
-		}
+			ya_out.copy_from_slice(std::slice::from_raw_parts(
+				ptr,
+				ya_mip.width() as usize * ya_mip.height() as usize * 2,
+			));
+			rdo_free(ptr);
 
-		let pitch = cbcr_mip.width() as usize * 2;
-		let w = cbcr_mip.width() as usize / 4;
-		let h = cbcr_mip.height() as usize / 4;
-		for y in 0..h {
-			for x in 0..w {
-				let block_start = (y * w + x) * 16;
-
-				let x_offset = x * 4 * 2;
-				let y_offset = y * 4 * pitch;
-				block_compression::decode::decode_block_bc5(
-					&cbcr_data[block_start..],
-					&mut cbcr_out[(y_offset + x_offset)..],
-					pitch,
-				);
+			let ptr = rdo_decode_rg(
+				cbcr_data.as_ptr(),
+				cbcr_mip.width() as u32,
+				cbcr_mip.height() as u32,
+				DXGI_FORMAT_BC5_UNORM,
+			);
+			if ptr.is_null() {
+				return None;
 			}
+			cbcr_out.copy_from_slice(std::slice::from_raw_parts(
+				ptr,
+				cbcr_mip.width() as usize * cbcr_mip.height() as usize * 2,
+			));
+			rdo_free(ptr);
 		}
 
 		let cbcr_buffer = image::ImageBuffer::<image::LumaA<u8>, Vec<u8>>::from_raw(
@@ -444,13 +358,8 @@ impl Texture {
 		Some(out)
 	}
 
-	pub fn encode_ycbcr(
-		width: u32,
-		height: u32,
-		data: &[u8],
-		device: &wgpu::Device,
-		queue: &wgpu::Queue,
-	) -> Option<Self> {
+	#[cfg_attr(feature = "pyo3", staticmethod)]
+	pub fn encode_ycbcr(width: u32, height: u32, data: &[u8]) -> Option<Self> {
 		let awidth = (width + 4 - 1) / 4 * 4;
 		let aheight = (height + 4 - 1) / 4 * 4;
 		let hwidth = (width / 2 + 4 - 1) / 4 * 4;
@@ -496,105 +405,6 @@ impl Texture {
 			image::imageops::FilterType::Lanczos3,
 		);
 
-		let format = block_compression::CompressionVariant::BC5;
-		let size =
-			format.blocks_byte_size(awidth, aheight) + format.blocks_byte_size(hwidth, hheight);
-
-		let ya = device.create_texture_with_data(
-			queue,
-			&wgpu::TextureDescriptor {
-				size: wgpu::Extent3d {
-					width: awidth,
-					height: aheight,
-					depth_or_array_layers: 1,
-				},
-				mip_level_count: 1,
-				sample_count: 1,
-				dimension: wgpu::TextureDimension::D2,
-				format: wgpu::TextureFormat::Rg8Unorm,
-				usage: wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::TEXTURE_BINDING,
-				label: None,
-				view_formats: &[],
-			},
-			wgpu::util::TextureDataOrder::LayerMajor,
-			&ya_raw,
-		);
-		let ya_view = ya.create_view(&wgpu::TextureViewDescriptor::default());
-
-		let cbcr = device.create_texture_with_data(
-			queue,
-			&wgpu::TextureDescriptor {
-				size: wgpu::Extent3d {
-					width: hwidth,
-					height: hheight,
-					depth_or_array_layers: 1,
-				},
-				mip_level_count: 1,
-				sample_count: 1,
-				dimension: wgpu::TextureDimension::D2,
-				format: wgpu::TextureFormat::Rg8Unorm,
-				usage: wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::TEXTURE_BINDING,
-				label: None,
-				view_formats: &[],
-			},
-			wgpu::util::TextureDataOrder::LayerMajor,
-			cbcr_buffer.as_bytes(),
-		);
-		let cbcr_view = cbcr.create_view(&wgpu::TextureViewDescriptor::default());
-
-		let buffer = device.create_buffer(&wgpu::BufferDescriptor {
-			label: None,
-			size: size as wgpu::BufferAddress,
-			usage: wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::STORAGE,
-			mapped_at_creation: false,
-		});
-
-		let map_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-			label: None,
-			size: buffer.size(),
-			usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-			mapped_at_creation: false,
-		});
-
-		let mut encoder =
-			device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
-		let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-			label: None,
-			timestamp_writes: None,
-		});
-
-		let mut compresser =
-			block_compression::GpuBlockCompressor::new(device.clone(), queue.clone());
-		compresser.add_compression_task(format, &ya_view, awidth, aheight, &buffer, None, None);
-		compresser.add_compression_task(
-			format,
-			&cbcr_view,
-			hwidth,
-			hheight,
-			&buffer,
-			None,
-			Some(format.blocks_byte_size(awidth, aheight) as u32),
-		);
-		compresser.compress(&mut compute_pass);
-
-		drop(compute_pass);
-
-		encoder.copy_buffer_to_buffer(&buffer, 0, &map_buffer, 0, buffer.size());
-
-		let (tx, rx) = std::sync::mpsc::channel();
-
-		encoder.map_buffer_on_submit(&map_buffer, wgpu::MapMode::Read, .., move |res| {
-			tx.send(res).unwrap()
-		});
-
-		queue.submit([encoder.finish()]);
-		device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
-
-		let Ok(Ok(())) = rx.recv() else {
-			return None;
-		};
-		let data = map_buffer.get_mapped_range(..);
-
 		let mut texture = Self::new();
 		texture.set_has_cube_map(false);
 		texture.set_array_size(1);
@@ -604,20 +414,71 @@ impl Texture {
 		y_mip.set_width(awidth as i32);
 		y_mip.set_height(aheight as i32);
 		y_mip.set_format(Format::BC5);
-		y_mip.set_data(&data[..(format.blocks_byte_size(awidth, aheight))]);
-		texture.add_mipmap(&y_mip);
 
 		let mut cbcr_mip = Mipmap::new();
 		cbcr_mip.set_width(hwidth as i32);
 		cbcr_mip.set_height(hheight as i32);
 		cbcr_mip.set_format(Format::BC5);
-		cbcr_mip.set_data(&data[(format.blocks_byte_size(awidth, aheight))..]);
+
+		unsafe {
+			let ptr = rdo_encode_rg(ya_raw.as_ptr(), awidth, aheight, DXGI_FORMAT_BC5_UNORM);
+			if ptr.is_null() {
+				return None;
+			}
+			kkdlib_txp_mipmap_set_data(y_mip.ptr, ptr as *const c_void);
+			rdo_free(ptr);
+
+			let ptr = rdo_encode_rg(
+				cbcr_buffer.as_bytes().as_ptr(),
+				hwidth,
+				hheight,
+				DXGI_FORMAT_BC5_UNORM,
+			);
+			if ptr.is_null() {
+				return None;
+			}
+			kkdlib_txp_mipmap_set_data(cbcr_mip.ptr, ptr as *const c_void);
+			rdo_free(ptr);
+		}
+
+		texture.add_mipmap(&y_mip);
 		texture.add_mipmap(&cbcr_mip);
 
-		drop(data);
-		map_buffer.unmap();
-
 		Some(texture)
+	}
+
+	#[cfg(all(feature = "pyo3"))]
+	#[cfg_attr(feature = "pyo3", staticmethod)]
+	pub fn py_from_rgba(width: i32, height: i32, data: &[u8], format: Format) -> Option<Self> {
+		let mip = Mipmap::from_rgba(width, height, data, format)?;
+		let mut tex = Self::new();
+		tex.set_has_cube_map(false);
+		tex.set_array_size(1);
+		tex.set_mipmaps_count(1);
+		tex.add_mipmap(&mip);
+		Some(tex)
+	}
+}
+
+impl Texture {
+	pub fn get_mipmap<'a>(&'a self, array_index: i32, mipmap_index: i32) -> Option<MipmapRef<'a>> {
+		let ptr = unsafe { kkdlib_txp_get_mipmap(self.ptr, array_index, mipmap_index) };
+		if ptr.is_null() {
+			return None;
+		}
+		Some(MipmapRef {
+			_ptr: ptr,
+			phantom: PhantomData,
+		})
+	}
+
+	pub fn mipmaps<'a>(&'a self) -> MipmapIterator<'a> {
+		MipmapIterator {
+			ptr: self.ptr,
+			index: 0,
+			len: (self.array_size() * self.mipmaps_count()) as usize,
+			phantom: PhantomData,
+		}
 	}
 }
 
@@ -844,59 +705,41 @@ impl Mipmap {
 					out[i * 4 + 3] = px.a() << 4;
 				}
 			}
-			Format::BC1
-			| Format::BC1a
-			| Format::BC2
-			| Format::BC3
-			| Format::BC4
-			| Format::BC5
-			| Format::BC7 => {
-				#[cfg(feature = "wgpu")]
-				{
-					let fmt = match self.format() {
-						Format::BC1 | Format::BC1a => block_compression::CompressionVariant::BC1,
-						Format::BC2 => block_compression::CompressionVariant::BC2,
-						Format::BC3 => block_compression::CompressionVariant::BC3,
-						Format::BC4 => block_compression::CompressionVariant::BC4,
-						Format::BC5 => block_compression::CompressionVariant::BC5,
-						Format::BC7 => block_compression::CompressionVariant::BC7(
-							block_compression::BC7Settings::alpha_slow(),
-						),
-						_ => unreachable!(),
-					};
+			Format::BC1 | Format::BC1a | Format::BC3 | Format::BC4 | Format::BC5 | Format::BC7 => {
+				let fmt = match self.format() {
+					Format::BC1 | Format::BC1a => DXGI_FORMAT_BC1_UNORM,
+					Format::BC3 => DXGI_FORMAT_BC3_UNORM,
+					Format::BC4 => DXGI_FORMAT_BC4_UNORM,
+					Format::BC5 => DXGI_FORMAT_BC5_UNORM,
+					Format::BC7 => DXGI_FORMAT_BC7_UNORM,
+					_ => unreachable!(),
+				};
 
-					block_compression::decode::decompress_blocks_as_rgba8(
-						fmt,
+				unsafe {
+					let ptr = rdo_decode_rgba(
+						data.as_ptr(),
 						self.width() as u32,
 						self.height() as u32,
-						data,
-						&mut out,
+						fmt,
 					);
+					if ptr.is_null() {
+						return None;
+					}
+					out.copy_from_slice(std::slice::from_raw_parts(
+						ptr,
+						self.width() as usize * self.height() as usize * 4,
+					));
+					rdo_free(ptr);
+				}
 
-					if self.format() == Format::BC5 {
-						for i in 0..(size as usize / 4) {
-							out[i * 4 + 2] = 0xFF;
-						}
+				if self.format() == Format::BC5 {
+					for i in 0..(size as usize / 4) {
+						out[i * 4 + 2] = 0xFF;
+						out[i * 4 + 3] = 0xFF;
 					}
 				}
-				#[cfg(not(feature = "wgpu"))]
-				return None;
 			}
-			#[cfg(feature = "bc6h")]
-			Format::BC6H => {
-				#[cfg(feature = "wgpu")]
-				{
-					block_compression::decode::decompress_blocks_as_rgba8(
-						block_compression::CompressionVariant::BC6H(
-							block_compression::BC6HSettings::very_slow(),
-						),
-						self.width() as u32,
-						self.height() as u32,
-						data,
-						&mut out,
-					);
-				}
-				#[cfg(not(feature = "wgpu"))]
+			Format::BC2 | Format::BC6H => {
 				return None;
 			}
 			Format::L8 => {
@@ -993,55 +836,26 @@ impl Mipmap {
 					mip_data[mip_offset + 1] = (rgba >> 8) as u8;
 				}
 			}
-			Format::BC1
-			| Format::BC1a
-			| Format::BC2
-			| Format::BC3
-			| Format::BC4
-			| Format::BC5
-			| Format::BC7 => {
-				#[cfg(feature = "wgpu")]
-				{
-					let fmt = match format {
-						Format::BC1 | Format::BC1a => block_compression::CompressionVariant::BC1,
-						Format::BC2 => block_compression::CompressionVariant::BC2,
-						Format::BC3 => block_compression::CompressionVariant::BC3,
-						Format::BC4 => block_compression::CompressionVariant::BC4,
-						Format::BC5 => block_compression::CompressionVariant::BC5,
-						Format::BC7 => block_compression::CompressionVariant::BC7(
-							block_compression::BC7Settings::alpha_slow(),
-						),
-						_ => unreachable!(),
-					};
+			Format::BC1 | Format::BC1a | Format::BC3 | Format::BC4 | Format::BC5 | Format::BC7 => {
+				let fmt = match format {
+					Format::BC1 | Format::BC1a => DXGI_FORMAT_BC1_UNORM,
+					Format::BC3 => DXGI_FORMAT_BC3_UNORM,
+					Format::BC4 => DXGI_FORMAT_BC4_UNORM,
+					Format::BC5 => DXGI_FORMAT_BC5_UNORM,
+					Format::BC7 => DXGI_FORMAT_BC7_UNORM,
+					_ => unreachable!(),
+				};
 
-					block_compression::encode::compress_rgba8(
-						fmt,
-						data,
-						&mut mip_data,
-						width as u32,
-						height as u32,
-						width as u32 * 4,
-					);
+				unsafe {
+					let ptr = rdo_encode_rgba(data.as_ptr(), width as u32, height as u32, fmt);
+					if ptr.is_null() {
+						return None;
+					}
+					mip_data.copy_from_slice(std::slice::from_raw_parts(ptr, mip.size() as usize));
+					rdo_free(ptr);
 				}
-				#[cfg(not(feature = "wgpu"))]
-				return None;
 			}
-			#[cfg(feature = "bc6h")]
-			Format::BC6H => {
-				#[cfg(feature = "wgpu")]
-				{
-					block_compression::encode::compress_rgba8(
-						block_compression::CompressionVariant::BC6H(
-							block_compression::BC6HSettings::very_slow(),
-						),
-						data,
-						&mut mip_data,
-						width as u32,
-						height as u32,
-						width as u32 * 4,
-					);
-				}
-				#[cfg(not(feature = "wgpu"))]
+			Format::BC2 | Format::BC6H => {
 				return None;
 			}
 			Format::L8 => {
@@ -1074,250 +888,6 @@ impl Mipmap {
 		}
 
 		mip.set_data(&mip_data);
-		Some(mip)
-	}
-
-	#[cfg(all(feature = "pyo3", feature = "wgpu"))]
-	#[cfg_attr(feature = "pyo3", staticmethod)]
-	pub fn py_from_rgba_gpu(width: i32, height: i32, data: &[u8], format: Format) -> Option<Self> {
-		let (device, queue) = WGPU_RESOURCES.get_or_init(init_wgpu);
-		Self::from_rgba_gpu(width, height, data, format, device, queue)
-	}
-}
-
-#[cfg(feature = "wgpu")]
-impl Mipmap {
-	pub fn to_rgba_gpu(&self, device: &wgpu::Device, queue: &wgpu::Queue) -> Option<Vec<u8>> {
-		let format = match self.format() {
-			Format::BC1 | Format::BC1a => wgpu::TextureFormat::Bc1RgbaUnorm,
-			Format::BC2 => wgpu::TextureFormat::Bc2RgbaUnorm,
-			Format::BC3 => wgpu::TextureFormat::Bc3RgbaUnorm,
-			Format::BC4 => wgpu::TextureFormat::Bc4RSnorm,
-			Format::BC5 => wgpu::TextureFormat::Bc5RgUnorm,
-			Format::BC7 => wgpu::TextureFormat::Bc7RgbaUnorm,
-			#[cfg(feature = "bc6h")]
-			Format::BC6H => wgpu::TextureFormat::Bc6hRgbUfloat,
-			_ => return self.rgba(),
-		};
-
-		let size = wgpu::Extent3d {
-			width: self.width() as u32,
-			height: self.height() as u32,
-			depth_or_array_layers: 1,
-		};
-
-		let texture = device.create_texture_with_data(
-			queue,
-			&wgpu::TextureDescriptor {
-				size,
-				mip_level_count: 1,
-				sample_count: 1,
-				dimension: wgpu::TextureDimension::D2,
-				format,
-				usage: wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::TEXTURE_BINDING,
-				label: None,
-				view_formats: &[],
-			},
-			wgpu::util::TextureDataOrder::LayerMajor,
-			self.data()?,
-		);
-
-		let in_view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-
-		let out_texture = device.create_texture(&wgpu::TextureDescriptor {
-			size,
-			mip_level_count: 1,
-			sample_count: 1,
-			dimension: wgpu::TextureDimension::D2,
-			format: wgpu::TextureFormat::Rgba8Unorm,
-			usage: wgpu::TextureUsages::COPY_SRC | wgpu::TextureUsages::RENDER_ATTACHMENT,
-			label: None,
-			view_formats: &[],
-		});
-
-		let out_view = out_texture.create_view(&wgpu::TextureViewDescriptor::default());
-
-		let pitch = (self.width() as u32 * 4).next_multiple_of(256);
-		let buffer = device.create_buffer(&wgpu::BufferDescriptor {
-			label: None,
-			size: (pitch * self.height() as u32) as wgpu::BufferAddress,
-			usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-			mapped_at_creation: false,
-		});
-
-		let mut encoder =
-			device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
-
-		let blitter = wgpu::util::TextureBlitter::new(device, wgpu::TextureFormat::Rgba8Unorm);
-		blitter.copy(device, &mut encoder, &in_view, &out_view);
-
-		encoder.copy_texture_to_buffer(
-			wgpu::TexelCopyTextureInfo {
-				texture: &out_texture,
-				mip_level: 0,
-				origin: wgpu::Origin3d::ZERO,
-				aspect: wgpu::TextureAspect::All,
-			},
-			wgpu::TexelCopyBufferInfo {
-				buffer: &buffer,
-				layout: wgpu::TexelCopyBufferLayout {
-					offset: 0,
-					bytes_per_row: Some(pitch),
-					rows_per_image: Some(self.height() as u32),
-				},
-			},
-			size,
-		);
-
-		let (tx, rx) = std::sync::mpsc::channel();
-
-		encoder.map_buffer_on_submit(&buffer, wgpu::MapMode::Read, .., move |res| {
-			tx.send(res).unwrap()
-		});
-
-		queue.submit([encoder.finish()]);
-		device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
-
-		let Ok(Ok(())) = rx.recv() else {
-			return None;
-		};
-
-		let data = buffer.get_mapped_range(..);
-		let mut out = vec![0; self.width() as usize * self.height() as usize * 4];
-		out.resize(self.width() as usize * self.height() as usize * 4, 0);
-		for y in 0..(self.height() as usize) {
-			let row =
-				&mut out[(y * self.width() as usize * 4)..((y + 1) * self.width() as usize * 4)];
-			row.copy_from_slice(
-				&data[(y * pitch as usize)..(y * pitch as usize + self.width() as usize * 4)],
-			);
-		}
-		drop(data);
-		buffer.unmap();
-
-		Some(out)
-	}
-
-	pub fn from_rgba_gpu(
-		width: i32,
-		height: i32,
-		data: &[u8],
-		format: Format,
-		device: &wgpu::Device,
-		queue: &wgpu::Queue,
-	) -> Option<Self> {
-		let fmt = match format {
-			Format::BC1 | Format::BC1a => block_compression::CompressionVariant::BC1,
-			Format::BC2 => block_compression::CompressionVariant::BC2,
-			Format::BC3 => block_compression::CompressionVariant::BC3,
-			Format::BC4 => block_compression::CompressionVariant::BC4,
-			Format::BC5 => block_compression::CompressionVariant::BC5,
-			Format::BC7 => block_compression::CompressionVariant::BC7(
-				block_compression::BC7Settings::alpha_slow(),
-			),
-			#[cfg(feature = "bc6h")]
-			Format::BC6H => block_compression::CompressionVariant::BC6H(
-				block_compression::BC6HSettings::very_slow(),
-			),
-			_ => return Self::from_rgba(width, height, data, format),
-		};
-
-		let awidth = width - (width % 4);
-		let aheight = height - (height % 4);
-		let mut new_data = vec![0; awidth as usize * aheight as usize * 4];
-		for y in 0..aheight {
-			new_data[(y as usize * awidth as usize * 4)
-				..(y as usize * awidth as usize * 4 + width as usize * 4)]
-				.copy_from_slice(
-					&data[(y as usize * width as usize * 4)
-						..(y as usize * width as usize * 4 + width as usize * 4)],
-				);
-		}
-
-		let size = fmt.blocks_byte_size(awidth as u32, aheight as u32);
-
-		let texture = device.create_texture_with_data(
-			queue,
-			&wgpu::TextureDescriptor {
-				size: wgpu::Extent3d {
-					width: awidth as u32,
-					height: aheight as u32,
-					depth_or_array_layers: 1,
-				},
-				mip_level_count: 1,
-				sample_count: 1,
-				dimension: wgpu::TextureDimension::D2,
-				format: wgpu::TextureFormat::Rgba8Unorm,
-				usage: wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::TEXTURE_BINDING,
-				label: None,
-				view_formats: &[],
-			},
-			wgpu::util::TextureDataOrder::LayerMajor,
-			&new_data,
-		);
-		let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-
-		let buffer = device.create_buffer(&wgpu::BufferDescriptor {
-			label: None,
-			size: size as wgpu::BufferAddress,
-			usage: wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::STORAGE,
-			mapped_at_creation: false,
-		});
-
-		let map_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-			label: None,
-			size: buffer.size(),
-			usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-			mapped_at_creation: false,
-		});
-
-		let mut encoder =
-			device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
-		let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-			label: None,
-			timestamp_writes: None,
-		});
-
-		let mut compresser =
-			block_compression::GpuBlockCompressor::new(device.clone(), queue.clone());
-		compresser.add_compression_task(
-			fmt,
-			&view,
-			awidth as u32,
-			aheight as u32,
-			&buffer,
-			None,
-			None,
-		);
-		compresser.compress(&mut compute_pass);
-
-		drop(compute_pass);
-
-		encoder.copy_buffer_to_buffer(&buffer, 0, &map_buffer, 0, buffer.size());
-
-		let (tx, rx) = std::sync::mpsc::channel();
-
-		encoder.map_buffer_on_submit(&map_buffer, wgpu::MapMode::Read, .., move |res| {
-			tx.send(res).unwrap()
-		});
-
-		queue.submit([encoder.finish()]);
-		device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
-
-		let Ok(Ok(())) = rx.recv() else {
-			return None;
-		};
-		let data = map_buffer.get_mapped_range(..);
-
-		let mut mip = Mipmap::new();
-		mip.set_width(awidth);
-		mip.set_height(aheight);
-		mip.set_format(format);
-		mip.set_data(&data);
-
-		drop(data);
-		map_buffer.unmap();
-
 		Some(mip)
 	}
 }
@@ -1370,13 +940,6 @@ impl<'a> MipmapRef<'a> {
 
 	pub fn rgba(&self) -> Option<Vec<u8>> {
 		Mipmap::rgba(unsafe { std::mem::transmute(self) })
-	}
-}
-
-#[cfg(feature = "wgpu")]
-impl MipmapRef<'_> {
-	pub fn to_rgba_gpu(&self, device: &wgpu::Device, queue: &wgpu::Queue) -> Option<Vec<u8>> {
-		Mipmap::to_rgba_gpu(unsafe { std::mem::transmute(self) }, device, queue)
 	}
 }
 
@@ -1465,4 +1028,17 @@ unsafe extern "C" {
 		signature: u32,
 	) -> bool;
 	fn kkdlib_txp_set_delete(set: *mut c_void);
+}
+
+const DXGI_FORMAT_BC1_UNORM: u32 = 71;
+const DXGI_FORMAT_BC3_UNORM: u32 = 77;
+const DXGI_FORMAT_BC4_UNORM: u32 = 80;
+const DXGI_FORMAT_BC5_UNORM: u32 = 83;
+const DXGI_FORMAT_BC7_UNORM: u32 = 98;
+unsafe extern "C" {
+	fn rdo_encode_rgba(rgba: *const u8, width: u32, height: u32, format: u32) -> *mut u8;
+	fn rdo_encode_rg(rg: *const u8, width: u32, height: u32, format: u32) -> *mut u8;
+	fn rdo_decode_rgba(blocks: *const u8, width: u32, height: u32, format: u32) -> *mut u8;
+	fn rdo_decode_rg(blocks: *const u8, width: u32, height: u32, format: u32) -> *mut u8;
+	fn rdo_free(ptr: *mut u8);
 }

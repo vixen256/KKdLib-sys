@@ -200,6 +200,11 @@ impl Set {
 	pub fn to_buf(&self) -> Option<Vec<u8>> {
 		let mut ptr = std::ptr::null_mut();
 		let mut size = 0usize;
+		for (_, spr) in self.sprites() {
+			if spr.texid() >= unsafe { kkdlib_spr_set_get_num_of_texture(self.ptr) as u32 } {
+				return None;
+			}
+		}
 		unsafe {
 			kkdlib_spr_set_pack_file(self.ptr, &mut ptr, &mut size);
 		}

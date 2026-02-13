@@ -8,8 +8,8 @@ name = "kkdlib"
 crate-type = ["lib", "cdylib"]
 
 [dependencies]
-bitfields = "1.0"
-bitflags = "2.10"
+bitfields = "1"
+bitflags = "2"
 image = { version = "0.25", default-features = false }
 libdeflate-sys = "1.25"
 parking_lot = { version = "0.12", optional = true }

@@ -146,9 +146,15 @@ jobs:
           rustup toolchain install nightly-2026-01-16
           rustup override set nightly-2026-01-16
           rustup component add rust-src
+          rustup target install aarch64-unknown-linux-gnu
 
           export RUSTFLAGS="-Ctarget-cpu=x86-64-v3 -Clinker-plugin-lto -Clinker=clang-21 -Clink-arg=-fuse-ld=lld"
           maturin build --release --features=pyo3 --out dist --find-interpreter -Zbuild-std=std,core,alloc,panic_abort --target x86_64-unknown-linux-gnu
+
+          export CFLAGS="-flto=thin -O3"
+          export CXXFLAGS="-flto=thin -O3"
+          export RUSTFLAGS="-Clinker-plugin-lto -Clinker=clang-21 -Clink-arg=-fuse-ld=lld"
+          maturin build --release --features=pyo3 --out dist --find-interpreter -Zbuild-std=std,core,alloc,panic_abort --target aarch64-unknown-linux-gnu
 
       - uses: actions/upload-artifact@v6
         with:

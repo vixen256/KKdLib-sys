@@ -134,7 +134,7 @@ jobs:
           chmod +x llvm.sh
           sudo ./llvm.sh 21
           sudo apt-get update
-          sudo apt-get install libglib2.0-dev libatk1.0-dev libgtk-3-dev nasm clang-21 lld-21 libomp-21-dev ispc
+          sudo apt-get install libglib2.0-dev libatk1.0-dev libgtk-3-dev nasm clang-21 lld-21 libomp-21-dev ispc gcc-aarch64-linux-gnu
 
           export CC="clang-21"
           export CXX="clang-21"

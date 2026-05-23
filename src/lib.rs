@@ -8,6 +8,7 @@ pub mod database;
 pub mod aet;
 pub mod farc;
 pub mod hash;
+pub mod key_val;
 pub mod spr;
 pub mod txp;
 

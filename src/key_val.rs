@@ -15,7 +15,13 @@ impl KeyVal {
 		unsafe { kkdlib_key_val_parse(self.ptr, data.as_ptr() as *const c_void, data.len()) };
 	}
 
-	pub fn open_scope<'a>(&'a mut self, key: &str) -> Option<ScopeGuard<'a>> {
+	pub fn from_data(data: &str) -> Self {
+		let mut kv = Self::new();
+		kv.parse(data);
+		kv
+	}
+
+	pub fn open_scope<'a>(&'a self, key: &str) -> Option<ScopeGuard<'a>> {
 		let Ok(c) = CString::new(key) else {
 			return None;
 		};
@@ -26,7 +32,7 @@ impl KeyVal {
 		}
 	}
 
-	pub fn open_scope_num<'a>(&'a mut self, i: u32) -> Option<ScopeGuard<'a>> {
+	pub fn open_scope_num<'a>(&'a self, i: u32) -> Option<ScopeGuard<'a>> {
 		if unsafe { kkdlib_key_val_open_scope_uint32(self.ptr, i) } {
 			Some(ScopeGuard { kv: self })
 		} else {
@@ -34,7 +40,7 @@ impl KeyVal {
 		}
 	}
 
-	pub fn has_key(&mut self, key: &str) -> bool {
+	pub fn has_key(&self, key: &str) -> bool {
 		let Ok(c) = CString::new(key) else {
 			return false;
 		};
@@ -107,7 +113,7 @@ pub struct ScopeGuard<'a> {
 }
 
 impl ScopeGuard<'_> {
-	pub fn open_scope<'a>(&'a mut self, key: &str) -> Option<ScopeGuard<'a>> {
+	pub fn open_scope<'a>(&'a self, key: &str) -> Option<ScopeGuard<'a>> {
 		let Ok(c) = CString::new(key) else {
 			return None;
 		};
@@ -118,7 +124,7 @@ impl ScopeGuard<'_> {
 		}
 	}
 
-	pub fn open_scope_num<'a>(&'a mut self, i: u32) -> Option<ScopeGuard<'a>> {
+	pub fn open_scope_num<'a>(&'a self, i: u32) -> Option<ScopeGuard<'a>> {
 		if unsafe { kkdlib_key_val_open_scope_uint32(self.kv.ptr, i) } {
 			Some(ScopeGuard { kv: self.kv })
 		} else {
@@ -126,7 +132,7 @@ impl ScopeGuard<'_> {
 		}
 	}
 
-	pub fn has_key(&mut self, key: &str) -> bool {
+	pub fn has_key(&self, key: &str) -> bool {
 		let Ok(c) = CString::new(key) else {
 			return false;
 		};

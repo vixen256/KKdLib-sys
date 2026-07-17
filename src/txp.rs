@@ -532,6 +532,10 @@ impl<'a> TextureRef<'a> {
 	pub fn mipmaps(&'a self) -> MipmapIterator<'a> {
 		Texture::mipmaps(unsafe { std::mem::transmute(self) })
 	}
+
+	pub fn decode_ycbcr(&self) -> Option<Vec<u8>> {
+		Texture::decode_ycbcr(unsafe { std::mem::transmute(self) })
+	}
 }
 
 unsafe impl Send for TextureRef<'_> {}
